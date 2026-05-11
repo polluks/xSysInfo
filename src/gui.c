@@ -1151,11 +1151,12 @@ static void draw_speed_panel(void)
             ULONG factor_x100 = (bench_results.dhrystones * 100) / reference_systems[i].dhrystones;
             char factor_str[16];
         int factor_off = 0;
+        if (factor_x100 <= 100000) factor_str[factor_off++] = ' ';
         if (factor_x100 <= 10000) factor_str[factor_off++] = ' ';
         if (factor_x100 <= 1000) factor_str[factor_off++] = ' ';
             format_scaled(factor_str + factor_off, sizeof(factor_str)-factor_off, factor_x100, FALSE);
             SetAPen(rp, COLOR_HIGHLIGHT);
-            TightText(rp, SPEED_PANEL_X + 132, y, (CONST_STRPTR)factor_str, -1, 7);
+            TightText(rp, SPEED_PANEL_X + 125, y, (CONST_STRPTR)factor_str, -1, 7);
         }
 
         y += 8;
@@ -1182,7 +1183,7 @@ static void draw_speed_panel(void)
     SetAPen(rp, COLOR_TEXT);
     snprintf(buffer, sizeof(buffer), "%s ",
                  get_string(MSG_MFLOPS));
-    TightText(rp, SPEED_PANEL_X + 84, y, (CONST_STRPTR)buffer, -1, 4);
+    TightText(rp, SPEED_PANEL_X + 75, y, (CONST_STRPTR)buffer, -1, 4);
     if (hw_info.fpu_type != FPU_NONE && bench_results.benchmarks_valid && hw_info.fpu_enabled) {
         char scaled[16];
         format_scaled(scaled, sizeof(scaled), bench_results.mflops, TRUE);
@@ -1191,7 +1192,7 @@ static void draw_speed_panel(void)
         snprintf(buffer, sizeof(buffer), "%s", get_string(MSG_NA));
     }
     SetAPen(rp, COLOR_HIGHLIGHT);
-    TightText(rp, SPEED_PANEL_X + 134, y, (CONST_STRPTR)buffer, -1, 4);
+    TightText(rp, SPEED_PANEL_X + 125, y, (CONST_STRPTR)buffer, -1, 4);
 
     /* Memory speeds header */
     y += 8;
@@ -1433,7 +1434,7 @@ static void draw_hardware_panel(void)
             snprintf(buffer, sizeof(buffer), "%s (%s)",
                      hw_info.mmu_string, get_string(MSG_IN_USE));
         } else {
-            strncpy(buffer, hw_info.mmu_string, sizeof(buffer) - 1);
+            copy_string(buffer, hw_info.mmu_string, sizeof(buffer));
         }
         draw_label_value(HARDWARE_PANEL_X + 4, y,
                          get_string(MSG_MMU), buffer, 80);
@@ -1505,7 +1506,7 @@ static void draw_hardware_panel(void)
         if (hw_info.ramsey_rev) {
             snprintf(buffer, sizeof(buffer), "%02X", hw_info.ramsey_rev);
         } else {
-            strncpy(buffer, get_string(MSG_NA), sizeof(buffer) - 1);
+            copy_string(buffer, get_string(MSG_NA), sizeof(buffer));
         }
         draw_label_value(HARDWARE_PANEL_X + 4, y,
                          get_string(MSG_RAMSEY_REV), buffer, 90);
@@ -1514,20 +1515,20 @@ static void draw_hardware_panel(void)
         /* Gary */
         switch (hw_info.gary_type) {
             case GARY_A1000:
-                strncpy(buffer, get_string(MSG_GARY_A1000), sizeof(buffer) - 1);
+                copy_string(buffer, get_string(MSG_GARY_A1000), sizeof(buffer));
                 break;
             case GARY_A500:
-                strncpy(buffer, get_string(MSG_GARY_A500), sizeof(buffer) - 1);
+                copy_string(buffer, get_string(MSG_GARY_A500), sizeof(buffer));
                 break;
             case GAYLE:
                 snprintf(buffer, sizeof(buffer), "%s %02X", get_string(MSG_GAYLE), hw_info.gary_rev);
                 break;
             case FAT_GARY:
-                strncpy(buffer, get_string(MSG_FAT_GARY), sizeof(buffer) - 1);
+                copy_string(buffer, get_string(MSG_FAT_GARY), sizeof(buffer));
                 break;
             case GARY_UNKNOWN:
             default:
-                strncpy(buffer, get_string(MSG_GARY_UNKNOWN), sizeof(buffer) - 1);
+                copy_string(buffer, get_string(MSG_GARY_UNKNOWN), sizeof(buffer));
                 break;
         }
         draw_label_value(HARDWARE_PANEL_X + 4, y,
@@ -1547,7 +1548,7 @@ static void draw_hardware_panel(void)
            if (hw_info.ramsey_rev) {
             snprintf(buffer, sizeof(buffer), "%02X", (unsigned char)hw_info.ramsey_rev);
         } else {
-            strncpy(buffer, get_string(MSG_NA), sizeof(buffer) - 1);
+            copy_string(buffer, get_string(MSG_NA), sizeof(buffer));
         }
         draw_label_value(HARDWARE_PANEL_X + 4, y,
                          get_string(MSG_RAMSEY_REV), buffer, 120);
@@ -1581,16 +1582,16 @@ static void draw_hardware_panel(void)
             y += 8;
             switch (hw_info.ramsey_refresh_rate) {
                 case 0:
-                    strncpy(buffer, "154 clk", sizeof(buffer) - 1);
+                    copy_string(buffer, "154 clk", sizeof(buffer));
                     break;
                 case 1:
-                    strncpy(buffer, "238 clk", sizeof(buffer) - 1);
+                    copy_string(buffer, "238 clk", sizeof(buffer));
                     break;
                 case 2:
-                    strncpy(buffer, "380 clk", sizeof(buffer) - 1);
+                    copy_string(buffer, "380 clk", sizeof(buffer));
                     break;
                 default:
-                    strncpy(buffer, "off", sizeof(buffer) - 1);
+                    copy_string(buffer, "off", sizeof(buffer));
                     break;
                }
             draw_label_value(HARDWARE_PANEL_X + 18, y,
@@ -1642,7 +1643,7 @@ static void draw_hardware_panel(void)
                 y += 8;
             }
             else {
-                strncpy(buffer, get_string(MSG_NA), sizeof(buffer) - 1);
+                copy_string(buffer, get_string(MSG_NA), sizeof(buffer));
                 draw_label_value(HARDWARE_PANEL_X + 18, y,
                             buffer, NULL, 120);
                 y += 8;
@@ -1651,7 +1652,7 @@ static void draw_hardware_panel(void)
         if (hw_info.sdmac_rev  && hw_info.gary_type == FAT_GARY) { //
             snprintf(buffer, sizeof(buffer), "%s REV %02X", (hw_info.is_A4000T? get_string(MSG_NCR_53C710) : get_string(MSG_SDMAC)), hw_info.sdmac_rev);
         } else {
-            strncpy(buffer, get_string(MSG_NA), sizeof(buffer) - 1);
+            copy_string(buffer, get_string(MSG_NA), sizeof(buffer));
         }
         draw_label_value(HARDWARE_PANEL_X + 4, y,
                          get_string(MSG_SDMAC_REV), buffer, 120);

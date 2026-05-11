@@ -24,10 +24,12 @@ CFLAGS = -O2 -m68000 -mtune=68020-60 -Wa,-m68881 -msoft-float -noixemul -Wall -W
          -I$(IDENTIFY_INC) \
          -I$(MMU_INC) \
          -DXSYSINFO_DATE="\"$(ADATE)\"" -DXSYSINFO_VERSION="\"$(FULL_VERSION)\"" \
-         -DPROG_VERSION=$(PROG_VERSION) -DPROG_REVISION=$(PROG_REVISION) \
-		 # -mcrt=nix13
+         -DPROG_VERSION=$(PROG_VERSION) -DPROG_REVISION=$(PROG_REVISION)
+
 ASMFLAGS = -Fhunk -esc -sc -m68020up -I $(NDK_PATH)
-LDFLAGS = -noixemul
+# Select the Kick 1.3-safe libnix runtime.  This keeps the no-ixemul build
+# while avoiding libnix20 helpers that auto-open utility.library.
+LDFLAGS = -mcrt=nix13
 LIBS = -lamiga -lgcc
 
 # Source files
@@ -48,6 +50,9 @@ SRCS = src/main.c \
        src/locale.c
 
 ASM_SRCS = src/cpu.S src/berr_trap.S
+TINYSETPATCH_DIR = 3rdparty/TinySetPatch
+TINYSETPATCH_SRC = $(TINYSETPATCH_DIR)/TinySetPatch.S
+TINYSETPATCH_BIN = $(TINYSETPATCH_DIR)/TinySetPatch
 
 OBJS = $(SRCS:.c=.o)
 
@@ -96,7 +101,7 @@ mmu: $(FLEXCAT_BIN)
 # Catalog definitions - maps source directory to AmigaOS language name
 CATALOG_DESC = catalogs/xSysInfo.cd
 CATALOG_DIR = catalogs/build
-CATALOG_LANGS = german:deutsch french:français turkish:türkçe polish:polski
+CATALOG_LANGS = german:deutsch french:français italian:italiano turkish:türkçe polish:polski
 
 # Build all catalogs
 catalogs: $(FLEXCAT_BIN)
@@ -343,11 +348,9 @@ download-libs: $(IDENTIFY_USR_LHA) $(IDENTIFY_PCI_LHA) $(OPENPCI_LHA) $(MMULIB_L
 	@mv MuManual/Include/pragmas/mmu_pragmas.h 3rdparty/mmu/reference/pragmas/
 	@rm -rf MuManual
 
-
-
-TinySetPatch: src/TinySetPatch.S
-	@echo "  VASM $@"
-	@$(VASM) -quiet -Fhunkexe -m68020up -o $@ -nosym $< -I $(NDK_PATH)
+TinySetPatch: $(TINYSETPATCH_SRC) $(TINYSETPATCH_DIR)/Makefile Makefile
+	@$(MAKE) -s -C $(TINYSETPATCH_DIR) TinySetPatch VASM=$(VASM) NDK_PATH="$(NDK_PATH)"
+	@cp $(TINYSETPATCH_BIN) $@
 
 disk: $(TARGET) download-libs TinySetPatch
 	@echo "  DISK"

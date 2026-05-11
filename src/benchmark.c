@@ -25,7 +25,6 @@
 
 extern struct ExecBase *SysBase;
 
-
 /* Global benchmark results */
 BenchmarkResults bench_results;
 
@@ -201,7 +200,7 @@ ULONG read_benchmark_clock(struct EClockVal *val)
 /*
  * Returns the CPU-frequencies in MHz scaled by 100
 */
-ULONG get_mhz_cpu()
+ULONG get_mhz_cpu(void)
 {
 
     ULONG multiplier, loop, maxMultiplier, startMultiplier;
@@ -339,7 +338,7 @@ ULONG get_mhz_cpu()
 /*
  * Returns the FPU-frequencies in MHz
 */
-ULONG get_mhz_fpu()
+ULONG get_mhz_fpu(void)
 {
 
     /*make some sanity tests:
@@ -907,7 +906,7 @@ void generate_comment(void)
         comment = get_string(MSG_NA);
     }
 
-    strncpy(hw_info.comment, comment, sizeof(hw_info.comment) - 1);
+    copy_string(hw_info.comment, comment, sizeof(hw_info.comment));
 }
 
 ULONG EClock_Diff_in_ms(struct EClockVal *start, struct EClockVal *end, ULONG EFreq)

@@ -5,6 +5,7 @@
  * xSysInfo - System software enumeration (libraries, devices, resources)
  */
 
+#include <stdio.h>
 #include <string.h>
 
 #include <exec/execbase.h>
@@ -56,8 +57,7 @@ static void copy_base_name(char *dest, const char *src, size_t destsize)
         dest[len] = '\0';
     } else {
         /* No dot found, copy entire string */
-        strncpy(dest, src, destsize - 1);
-        dest[destsize - 1] = '\0';
+        copy_string(dest, src, destsize);
     }
 }
 
@@ -95,7 +95,7 @@ void sort_software_list(SoftwareList *list)
  */
 void enumerate_libraries(void)
 {
-    struct Library *lib;
+    struct Node *node;
     ULONG i;
     SoftwareEntry *entry;
 
@@ -103,9 +103,9 @@ void enumerate_libraries(void)
 
     Forbid();
 
-    for (lib = (struct Library *)SysBase->LibList.lh_Head;
-         (struct Node *)lib != (struct Node *)&SysBase->LibList.lh_Tail;
-         lib = (struct Library *)lib->lib_Node.ln_Succ) {
+    for (node = SysBase->LibList.lh_Head; node && node->ln_Succ;
+         node = node->ln_Succ) {
+        struct Library *lib = (struct Library *)node;
 
         /* Detect FPU library presence (outside entry limit check) */
         if (lib->lib_Node.ln_Name) {
@@ -131,10 +131,11 @@ void enumerate_libraries(void)
             if (strstr(lib->lib_Node.ln_Name, ".library") != NULL) {
                 copy_base_name(entry->name, lib->lib_Node.ln_Name, sizeof(entry->name));
             } else { /* not a ".library" */
-                strncpy(entry->name, lib->lib_Node.ln_Name, sizeof(entry->name));
+                copy_string(entry->name, lib->lib_Node.ln_Name,
+                            sizeof(entry->name));
             }
         } else {
-            strncpy(entry->name, "(unknown)", sizeof(entry->name) - 1);
+            copy_string(entry->name, "(unknown)", sizeof(entry->name));
         }
 
         entry->address = (APTR)lib;
@@ -165,8 +166,7 @@ void enumerate_libraries(void)
 
             /* Insert kickstart entry at position 0 */
             entry = &libraries_list.entries[0];
-            strncpy(entry->name, "kick update", sizeof(entry->name) - 1);
-            entry->name[sizeof(entry->name) - 1] = '\0';
+            copy_string(entry->name, "kick update", sizeof(entry->name));
             entry->location = LOC_KICKSTART;
             /* ROM base: 0x00f80000 for 512K, 0x00fc0000 for 256K */
             entry->address = (APTR)(hw_info.kickstart_size >= 512 ? 0x00f80000 : 0x00fc0000);
@@ -185,8 +185,7 @@ void enumerate_libraries(void)
 
         /* Insert kickstart entry at position 0 */
         entry = &libraries_list.entries[0];
-        strncpy(entry->name, "kickstart", sizeof(entry->name) - 1);
-        entry->name[sizeof(entry->name) - 1] = '\0';
+        copy_string(entry->name, "kickstart", sizeof(entry->name));
         entry->location = LOC_KICKSTART;
         /* ROM base: 0x00f80000 for 512K, 0x00fc0000 for 256K */
         entry->address = (APTR)(hw_info.kickstart_size >= 512 ? 0x00f80000 : 0x00fc0000);
@@ -202,15 +201,15 @@ void enumerate_libraries(void)
  */
 void enumerate_devices(void)
 {
-    struct Device *dev;
+    struct Node *node;
 
     memset(&devices_list, 0, sizeof(devices_list));
 
     Forbid();
 
-    for (dev = (struct Device *)SysBase->DeviceList.lh_Head;
-         (struct Node *)dev != (struct Node *)&SysBase->DeviceList.lh_Tail;
-         dev = (struct Device *)dev->dd_Library.lib_Node.ln_Succ) {
+    for (node = SysBase->DeviceList.lh_Head; node && node->ln_Succ;
+         node = node->ln_Succ) {
+        struct Device *dev = (struct Device *)node;
 
         if (devices_list.count >= MAX_SOFTWARE_ENTRIES) break;
 
@@ -221,10 +220,11 @@ void enumerate_devices(void)
                 copy_base_name(entry->name, dev->dd_Library.lib_Node.ln_Name,
                                sizeof(entry->name));
             } else { //not a ".device"
-                strncpy(entry->name, dev->dd_Library.lib_Node.ln_Name, sizeof(entry->name));
+                copy_string(entry->name, dev->dd_Library.lib_Node.ln_Name,
+                            sizeof(entry->name));
             }
         } else {
-            strncpy(entry->name, "(unknown)", sizeof(entry->name) - 1);
+            copy_string(entry->name, "(unknown)", sizeof(entry->name));
         }
 
         entry->address = (APTR)dev;
@@ -245,15 +245,15 @@ void enumerate_devices(void)
  */
 void enumerate_resources(void)
 {
-    struct Library *res;
+    struct Node *node;
 
     memset(&resources_list, 0, sizeof(resources_list));
 
     Forbid();
 
-    for (res = (struct Library *)SysBase->ResourceList.lh_Head;
-         (struct Node *)res != (struct Node *)&SysBase->ResourceList.lh_Tail;
-         res = (struct Library *)res->lib_Node.ln_Succ) {
+    for (node = SysBase->ResourceList.lh_Head; node && node->ln_Succ;
+         node = node->ln_Succ) {
+        struct Library *res = (struct Library *)node;
 
         if (resources_list.count >= MAX_SOFTWARE_ENTRIES) break;
 
@@ -264,10 +264,11 @@ void enumerate_resources(void)
                 copy_base_name(entry->name, res->lib_Node.ln_Name,
                                sizeof(entry->name));
             } else { //not a ".resource"
-                strncpy(entry->name, res->lib_Node.ln_Name, sizeof(entry->name));
+                copy_string(entry->name, res->lib_Node.ln_Name,
+                            sizeof(entry->name));
             }
         } else {
-            strncpy(entry->name, "(unknown)", sizeof(entry->name) - 1);
+            copy_string(entry->name, "(unknown)", sizeof(entry->name));
         }
 
         entry->address = (APTR)res;
@@ -487,8 +488,9 @@ void enumerate_mmu_entries(void)
             CloseLibrary((struct Library *)DOSBase);
         }
     } else {
-        SoftwareEntry *entry = &mmu_list.entries[0];
-        strncpy(entry->name, "mmu.library not loaded", sizeof(entry->name) - 1);
+        entry = &mmu_list.entries[0];
+        copy_string(entry->name, "mmu.library not loaded",
+                    sizeof(entry->name));
         mmu_list.count++;
     }
     Permit();
