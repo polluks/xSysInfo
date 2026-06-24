@@ -53,6 +53,7 @@ static const char *default_strings[MSG_COUNT] = {
     /* MSG_FPU */                    "FPU",
     /* MSG_MMU */                    "MMU",
     /* MSG_VBR */                    "VBR",
+    /* MSG_SSP */                    "SSP",
     /* MSG_COMMENT */                "Comment",
     /* MSG_HORIZ_KHZ */              "Horiz KHz",
     /* MSG_ECLOCK_HZ */              "EClock Hz",
@@ -106,7 +107,7 @@ static const char *default_strings[MSG_COUNT] = {
     /* MSG_DISK_STATE */             "DISK STATE",
     /* MSG_TOTAL_BLOCKS */           "TOTAL NUMBER OF BLOCKS",
     /* MSG_BLOCKS_USED */            "TOTAL BLOCKS USED",
-    /* MSG_BYTES_PER_BLOCK */        "BYTES PER BLOCK",
+    /* MSG_BYTES_PER_BLOCK */        "BLOCK SIZE",
     /* MSG_DISK_TYPE */              "DRIVE/DISK TYPE",
     /* MSG_VOLUME_NAME */            "VOLUME NAME",
     /* MSG_DEVICE_NAME */            "DEVICE NAME",
@@ -242,8 +243,9 @@ static const char *default_strings[MSG_COUNT] = {
     /* MSG_COMMENT_DEFAULT */        "What can I say!",
 
     /* Hardware toggle */
-    /* MSG_HARDWARE_STD */           "NORMAL",
-    /* MSG_HARDWARE_EXT */           "EXTENDED",
+    /* MSG_HARDWARE_STD */           "OVERVIEW",
+    /* MSG_HARDWARE_CPU */           "CPU",
+    /* MSG_HARDWARE_EXT */           "CHIPSET",
     /* MSG_RAMSEY_CTRL */            "Ramsey control",
     /* MSG_SDMAC_REV */              "SCSI chip",
     /* MSG_RAMSEY_PAGE */            "Page mode",
@@ -310,6 +312,7 @@ static const char *default_strings[MSG_COUNT] = {
     /* MSG_MMU_FLAGS5_HINT */        "SNG=Single Page RP=Repairable IO=IOspace",
     /* MSG_MMU_FLAGS6_HINT */        "Ux=UserX SW=Swapped MAP=Remapped BN=Bundled",
     /* MSG_MMU_FLAGS7_HINT */        "IND=Indirect +=more flags",
+    /* MSG_SLOT_ZORRO */             "ZORRO",
 
 };
 

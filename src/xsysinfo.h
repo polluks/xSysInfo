@@ -77,7 +77,8 @@ extern struct TextAttr Topaz8Font;
 
 /* Color definitions - use PEN() to map through allocated pens */
 #define COLOR_BACKGROUND    PEN(0)
-#define COLOR_PANEL_BG      PEN(1)
+#define COLOR_PANEL_BG      PEN(0)
+#define COLOR_TITLE_BG      PEN(1)
 #define COLOR_TEXT          PEN(2)
 #define COLOR_HIGHLIGHT     PEN(3)
 #define COLOR_BAR_FILL      PEN(4)
@@ -105,7 +106,9 @@ typedef enum {
 /* Software list types */
 typedef enum {
     HARDWARE_STD,
-    HARDWARE_EXT
+    HARDWARE_CPU,
+    HARDWARE_EXT,
+    HARDWARE_COUNT
 } HardwareType;
 
 
@@ -140,6 +143,7 @@ typedef struct {
     struct TextFont *tf;            /* Current font */
     BOOL use_custom_screen;         /* TRUE if we opened our own screen */
     BOOL is_pal;                    /* TRUE if PAL system */
+    BOOL dark_mode;                 /* TRUE if DARK palette is requested */
     UWORD screen_height;            /* Actual screen height (200 or 256) */
     DisplayMode display_mode;       /* Requested display mode */
 

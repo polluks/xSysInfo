@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2025 Stefan Reinauer
 
 /*
- * xSysInfo - Expansion boards (Zorro) enumeration and view
+ * xSysInfo - Expansion boards enumeration and view
  */
 
 #include <string.h>
@@ -26,8 +26,32 @@
 #include "tagitem.h"
 #endif
 
+#define BOARD_LIST_FIRST_Y 56
+#define BOARD_LIST_LINE_H 10
+#define BOARD_LIST_BOTTOM_PAD 50
+
+#define OPENPCI_MANUFACTURER_FIRST 1729
+#define OPENPCI_MANUFACTURER_LAST  1735
+
+/*
+ * Minimal OpenPCI pci_dev prefix used by identify.library when traversing
+ * PCI boards via IdPciExpansionTags(IDTAG_Expansion, ...).
+ */
+struct pci_dev {
+    void *bus;
+    struct pci_dev *next;
+    struct pci_dev *pred;
+    UBYTE devfn;
+    UBYTE kludgefill;
+    UWORD vendor;
+    UWORD device;
+    ULONG devclass;
+};
+
 /* Global board list */
 BoardList board_list;
+
+#define BOARD_SERIAL_HEX_THRESHOLD 100000UL
 
 /* External references */
 extern AppContext *app;
@@ -47,6 +71,15 @@ void format_board_size(ULONG size, char *buffer, ULONG bufsize)
     }
 }
 
+static void format_board_serial(ULONG serial, char *buffer, ULONG bufsize)
+{
+    if (serial >= BOARD_SERIAL_HEX_THRESHOLD) {
+        snprintf(buffer, bufsize, "$%08lX", (unsigned long)serial);
+    } else {
+        snprintf(buffer, bufsize, "%lu", (unsigned long)serial);
+    }
+}
+
 /*
  * Get board type string
  */
@@ -57,9 +90,234 @@ const char *get_board_type_string(BoardType type)
             return get_string(MSG_ZORRO_II);
         case BOARD_ZORRO_III:
             return get_string(MSG_ZORRO_III);
+        case BOARD_PCI:
+            return "PCI";
         default:
             return get_string(MSG_UNKNOWN);
     }
+}
+
+static BOOL append_zorro_board(struct ConfigDev *cd, const char *manufacturer,
+                               const char *product)
+{
+    BoardInfo *board;
+
+    if (board_list.count >= MAX_BOARDS)
+        return FALSE;
+
+    board = &board_list.boards[board_list.count];
+
+    board->board_address = (ULONG)cd->cd_BoardAddr;
+    board->board_size = cd->cd_BoardSize;
+    board->manufacturer_id = cd->cd_Rom.er_Manufacturer;
+    board->product_id = cd->cd_Rom.er_Product;
+    board->serial_number = (ULONG)cd->cd_Rom.er_SerialNumber;
+
+    debug("  boards: Found Zorro board at $%08X\n",
+          (ULONG)board->board_address);
+
+    if ((cd->cd_Rom.er_Flags & ERFF_ZORRO_III) ||
+        ((cd->cd_Rom.er_Type & ERT_TYPEMASK) == ERT_ZORROIII)) {
+        board->board_type = BOARD_ZORRO_III;
+    } else {
+        board->board_type = BOARD_ZORRO_II;
+    }
+
+    format_board_size(board->board_size, board->size_string,
+                      sizeof(board->size_string));
+    snprintf(board->address_string, sizeof(board->address_string),
+             "$%08lX", (unsigned long)board->board_address);
+    format_board_serial(board->serial_number, board->detail_string,
+                        sizeof(board->detail_string));
+
+    if (manufacturer && manufacturer[0]) {
+        snprintf(board->manufacturer_name, sizeof(board->manufacturer_name),
+                 "%s", manufacturer);
+    } else {
+        snprintf(board->manufacturer_name, sizeof(board->manufacturer_name),
+                 "ID %u", board->manufacturer_id);
+    }
+
+    if (product && product[0]) {
+        snprintf(board->product_name, sizeof(board->product_name), "%s",
+                 product);
+    } else {
+        snprintf(board->product_name, sizeof(board->product_name),
+                 "Product %u", board->product_id);
+    }
+
+    board_list.count++;
+    return TRUE;
+}
+
+static BOOL is_openpci_resource(const struct ConfigDev *cd)
+{
+    UWORD manufacturer = cd->cd_Rom.er_Manufacturer;
+
+    return manufacturer >= OPENPCI_MANUFACTURER_FIRST &&
+           manufacturer <= OPENPCI_MANUFACTURER_LAST;
+}
+
+static BOOL append_pci_board(struct pci_dev *pci, const char *manufacturer,
+                             const char *product, const char *class_name)
+{
+    BoardInfo *board;
+
+    if (board_list.count >= MAX_BOARDS)
+        return FALSE;
+
+    if (!pci)
+        return TRUE;
+
+    board = &board_list.boards[board_list.count];
+    board->board_type = BOARD_PCI;
+    board->manufacturer_id = pci->vendor;
+    board->product_id = pci->device;
+    board->serial_number = 0;
+    board->board_address = 0;
+    board->board_size = 0;
+
+    snprintf(board->address_string, sizeof(board->address_string), "--");
+    snprintf(board->size_string, sizeof(board->size_string), "--");
+    if (class_name && class_name[0]) {
+        snprintf(board->detail_string, sizeof(board->detail_string), "%s",
+                 class_name);
+    } else {
+        snprintf(board->detail_string, sizeof(board->detail_string), "PCI");
+    }
+
+    if (manufacturer && manufacturer[0]) {
+        snprintf(board->manufacturer_name, sizeof(board->manufacturer_name),
+                 "%s", manufacturer);
+    } else {
+        snprintf(board->manufacturer_name, sizeof(board->manufacturer_name),
+                 "$%04lx", (unsigned long)pci->vendor);
+    }
+
+    if (product && product[0]) {
+        snprintf(board->product_name, sizeof(board->product_name), "%s",
+                 product);
+    } else {
+        snprintf(board->product_name, sizeof(board->product_name),
+                 "$%04lx", (unsigned long)pci->device);
+    }
+
+    debug("  boards: Found PCI board %04lx:%04lx\n",
+          (unsigned long)pci->vendor, (unsigned long)pci->device);
+
+    board_list.count++;
+    return TRUE;
+}
+
+static void enumerate_pci_boards_with_identify(void)
+{
+    struct pci_dev *pci = NULL;
+    LONG result;
+    char manufacturer[64];
+    char product[64];
+    char class_name[64];
+
+    debug("  boards: Scanning PCI boards via identify.library...\n");
+
+    while (board_list.count < MAX_BOARDS) {
+        manufacturer[0] = '\0';
+        product[0] = '\0';
+        class_name[0] = '\0';
+
+        result = IdPciExpansionTags(
+            IDTAG_Expansion, (ULONG)&pci,
+            IDTAG_ManufStr, (ULONG)manufacturer,
+            IDTAG_ProdStr, (ULONG)product,
+            IDTAG_ClassStr, (ULONG)class_name,
+            IDTAG_StrLength, sizeof(product),
+            TAG_DONE);
+
+        if (result != IDERR_OKAY) {
+            debug("  boards: PCI scan stopped with result %ld\n",
+                  (long)result);
+            break;
+        }
+
+        if (!append_pci_board(pci, manufacturer, product, class_name))
+            break;
+    }
+}
+
+static void enumerate_zorro_boards_with_identify(void)
+{
+    struct ConfigDev *cd = NULL;
+    LONG result;
+    ULONG class_id;
+    UBYTE unknown;
+    char manufacturer[64];
+    char product[64];
+    char class_name[64];
+
+    debug("  boards: Scanning physical expansion boards via identify.library...\n");
+
+    while (board_list.count < MAX_BOARDS) {
+        class_id = IDCID_UNKNOWN;
+        unknown = FALSE;
+        manufacturer[0] = '\0';
+        product[0] = '\0';
+        class_name[0] = '\0';
+
+        result = IdExpansionTags(
+            IDTAG_Expansion, (ULONG)&cd,
+            IDTAG_ManufStr, (ULONG)manufacturer,
+            IDTAG_ProdStr, (ULONG)product,
+            IDTAG_ClassStr, (ULONG)class_name,
+            IDTAG_ClassID, (ULONG)&class_id,
+            IDTAG_UnknownFlag, (ULONG)&unknown,
+            IDTAG_StrLength, sizeof(product),
+            TAG_DONE);
+
+        if (result != IDERR_OKAY)
+            break;
+
+        if (class_id == IDCID_VIRTUAL) {
+            if (is_openpci_resource(cd)) {
+                debug("  boards: Skipping OpenPCI virtual expansion "
+                      "%u/%u\n",
+                      cd->cd_Rom.er_Manufacturer,
+                      cd->cd_Rom.er_Product);
+            } else {
+                debug("  boards: Skipping virtual expansion board "
+                      "%u/%u\n",
+                      cd->cd_Rom.er_Manufacturer,
+                      cd->cd_Rom.er_Product);
+            }
+            continue;
+        }
+
+        append_zorro_board(cd, manufacturer, product);
+    }
+
+    enumerate_pci_boards_with_identify();
+}
+
+static void enumerate_zorro_boards_raw(void)
+{
+    struct ConfigDev *cd = NULL;
+    struct Library *ExpansionBase;
+
+    debug("  boards: Opening expansion.library...\n");
+    ExpansionBase = OpenLibrary((CONST_STRPTR)"expansion.library",
+                                MIN_EXPANSION_VERSION);
+    if (!ExpansionBase) {
+        Printf((CONST_STRPTR)"Could not open expansion.library v%d\n",
+               MIN_EXPANSION_VERSION);
+        return;
+    }
+
+    debug("  boards: Scanning raw ConfigDevs...\n");
+    while ((cd = (struct ConfigDev *)FindConfigDev(cd, -1, -1)) != NULL) {
+        if (!append_zorro_board(cd, NULL, NULL))
+            break;
+    }
+
+    debug("  boards: Closing expansion.library...\n");
+    CloseLibrary(ExpansionBase);
 }
 
 /*
@@ -67,77 +325,43 @@ const char *get_board_type_string(BoardType type)
  */
 void enumerate_boards(void)
 {
-    struct ConfigDev *cd = NULL;
-    struct Library *ExpansionBase;
-
     debug("  boards: Starting enumeration...\n");
 
     memset(&board_list, 0, sizeof(board_list));
 
-    debug("  boards: Opening expansion.library...\n");
-    ExpansionBase = OpenLibrary((CONST_STRPTR)"expansion.library", MIN_EXPANSION_VERSION);
-    if (!ExpansionBase) {
-        Printf((CONST_STRPTR)"Could not open expansion.library v%d\n", MIN_EXPANSION_VERSION);
-        return;
+    if (IdentifyBase) {
+        enumerate_zorro_boards_with_identify();
+    } else {
+        enumerate_zorro_boards_raw();
     }
 
-    debug("  boards: Scanning for ConfigDevs...\n");
-    while ((cd = (struct ConfigDev *)FindConfigDev(cd, -1, -1)) != NULL) {
-        if (board_list.count >= MAX_BOARDS) break;
-
-        BoardInfo *board = &board_list.boards[board_list.count];
-
-        board->board_address = (ULONG)cd->cd_BoardAddr;
-        board->board_size = cd->cd_BoardSize;
-        board->manufacturer_id = cd->cd_Rom.er_Manufacturer;
-        board->product_id = cd->cd_Rom.er_Product;
-        board->serial_number = cd->cd_Rom.er_SerialNumber;
-
-        debug("  boards: Found board at $%08X\n", (ULONG)board->board_address);
-
-        /* Determine Zorro type */
-        if ((cd->cd_Rom.er_Type & ERT_TYPEMASK) == ERT_ZORROIII) {
-            board->board_type = BOARD_ZORRO_III;
-        } else {
-            board->board_type = BOARD_ZORRO_II;
-        }
-
-        /* Format size string */
-        format_board_size(board->board_size, board->size_string,
-                          sizeof(board->size_string));
-
-        /* Use identify.library to get product and manufacturer names */
-        if (IdentifyBase) {
-            debug("  boards: Identifying board...\n");
-            IdExpansionTags(
-                IDTAG_ConfigDev, (ULONG)cd,
-                IDTAG_ManufStr, (ULONG)board->manufacturer_name,
-                IDTAG_ProdStr, (ULONG)board->product_name,
-                IDTAG_StrLength, sizeof(board->product_name) - 1,
-                TAG_DONE);
-        } else {
-            /* Fallback if identify not available */
-            snprintf(board->manufacturer_name, sizeof(board->manufacturer_name),
-                     "ID %u", board->manufacturer_id);
-            snprintf(board->product_name, sizeof(board->product_name),
-                     "Product %u", board->product_id);
-        }
-
-        board_list.count++;
-    }
-
-    debug("  boards: Closing expansion.library...\n");
-    CloseLibrary(ExpansionBase);
     debug("  boards: Enumeration complete, found %d boards\n", (LONG)board_list.count);
 }
 
-/*
- * Draw text field at position
- */
-static void draw_board_field(struct RastPort *rp, WORD x, WORD y, const char *text)
+static void draw_board_field_clipped(WORD x, WORD y, const char *text,
+                                     WORD max_x)
 {
-    Move(rp, x, y);
-    Text(rp, (CONST_STRPTR)text, strlen(text));
+    draw_text_clipped(x, y, text, max_x - x);
+}
+
+static LONG visible_board_rows(void)
+{
+    LONG rows;
+
+    rows = ((LONG)app->screen_height - BOARD_LIST_BOTTOM_PAD -
+            BOARD_LIST_FIRST_Y + BOARD_LIST_LINE_H - 1) / BOARD_LIST_LINE_H;
+    return rows > 0 ? rows : 1;
+}
+
+static LONG max_board_scroll(void)
+{
+    LONG rows = visible_board_rows();
+
+    if ((LONG)board_list.count <= rows) {
+        return 0;
+    }
+
+    return (LONG)board_list.count - rows;
 }
 
 /*
@@ -149,6 +373,7 @@ void draw_boards_view(void)
     WORD y;
     ULONG i;
     char buffer[128];
+    Button *btn;
 
     /* Draw title panel */
     draw_panel(20,  0, 600, 24, NULL);
@@ -172,9 +397,13 @@ void draw_boards_view(void)
     Draw(rp, 628, y + 4);
 
     /* Draw board entries */
-    y = 56;
+    if (app->board_scroll > max_board_scroll()) {
+        app->board_scroll = max_board_scroll();
+    }
+
+    y = BOARD_LIST_FIRST_Y;
     for (i = app->board_scroll;
-         i < board_list.count && y < app->screen_height - 50;
+         i < board_list.count && y < app->screen_height - BOARD_LIST_BOTTOM_PAD;
          i++) {
 
         BoardInfo *board = &board_list.boards[i];
@@ -183,39 +412,44 @@ void draw_boards_view(void)
         SetBPen(rp, COLOR_BACKGROUND);
 
         /* Address */
-        snprintf(buffer, sizeof(buffer), "$%08lX", (unsigned long)board->board_address);
-        draw_board_field(rp, 25, y, buffer);
+        draw_board_field_clipped(25, y, board->address_string, 136);
 
         /* Size */
-        draw_board_field(rp, 136, y, board->size_string);
+        draw_board_field_clipped(136, y, board->size_string, 214);
 
         /* Type */
-        draw_board_field(rp, 214, y, get_board_type_string(board->board_type));
+        draw_board_field_clipped(214, y,
+                                 get_board_type_string(board->board_type),
+                                 296);
 
         /* Product */
-        snprintf(buffer, sizeof(buffer), "%.16s", board->product_name);
-        draw_board_field(rp, 296, y, buffer);
+        snprintf(buffer, sizeof(buffer), "%s", board->product_name);
+        draw_board_field_clipped(296, y, buffer, 420);
 
         /* Manufacturer */
-        snprintf(buffer, sizeof(buffer), "%.14s", board->manufacturer_name);
-        draw_board_field(rp, 420, y, buffer);
+        snprintf(buffer, sizeof(buffer), "%s", board->manufacturer_name);
+        draw_board_field_clipped(420, y, buffer, 550);
 
-        /* Serial */
-        snprintf(buffer, sizeof(buffer), "%ld", (long)board->serial_number);
-        draw_board_field(rp, 550, y, buffer);
+        /* Serial or PCI class */
+        snprintf(buffer, sizeof(buffer), "%s", board->detail_string);
+        draw_board_field_clipped(550, y, buffer, SCREEN_WIDTH - 4);
 
-        y += 10;
+        y += BOARD_LIST_LINE_H;
     }
 
     if (board_list.count == 0) {
         SetAPen(rp, COLOR_TEXT);
         SetBPen(rp, COLOR_BACKGROUND);
-        Move(rp, 200, 120);
-        Text(rp, (CONST_STRPTR)get_string(MSG_BOARDS_NO_BOARDS_FOUND), strlen(get_string(MSG_BOARDS_NO_BOARDS_FOUND)));
+        draw_text_clipped(200, 120, get_string(MSG_BOARDS_NO_BOARDS_FOUND),
+                          SCREEN_WIDTH - 204);
     }
 
-    /* Draw exit button */
-    Button *btn = find_button(BTN_BOARD_EXIT);
+    /* Draw bottom buttons */
+    btn = find_button(BTN_BOARD_PREV);
+    if (btn) draw_button(btn);
+    btn = find_button(BTN_BOARD_NEXT);
+    if (btn) draw_button(btn);
+    btn = find_button(BTN_BOARD_EXIT);
     if (btn) draw_button(btn);
 }
 
@@ -224,6 +458,20 @@ void draw_boards_view(void)
  */
 void boards_view_update_buttons(void)
 {
+    LONG max_scroll = max_board_scroll();
+
+    if (max_scroll > 0) {
+        add_button(20, 188, 60, 12,
+                   get_string(MSG_BTN_PREV), BTN_BOARD_PREV,
+                   app->board_scroll > 0);
+        add_button(90, 188, 60, 12,
+                   get_string(MSG_BTN_NEXT), BTN_BOARD_NEXT,
+                   app->board_scroll < max_scroll);
+        add_button(560, 188, 60, 12,
+                   get_string(MSG_BTN_EXIT), BTN_BOARD_EXIT, TRUE);
+        return;
+    }
+
     add_button(20, 188, 60, 12,
                get_string(MSG_BTN_EXIT), BTN_BOARD_EXIT, TRUE);
 }
@@ -233,7 +481,26 @@ void boards_view_update_buttons(void)
  */
 void boards_view_handle_button(ButtonID id)
 {
-    if (id == BTN_BOARD_EXIT) {
-        switch_to_view(VIEW_MAIN);
+    switch (id) {
+        case BTN_BOARD_PREV:
+            if (app->board_scroll > 0) {
+                app->board_scroll--;
+                redraw_current_view();
+            }
+            break;
+
+        case BTN_BOARD_NEXT:
+            if (app->board_scroll < max_board_scroll()) {
+                app->board_scroll++;
+                redraw_current_view();
+            }
+            break;
+
+        case BTN_BOARD_EXIT:
+            switch_to_view(VIEW_MAIN);
+            break;
+
+        default:
+            break;
     }
 }

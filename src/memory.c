@@ -52,7 +52,11 @@ const char *get_memory_type_string(UWORD attrs, APTR addr)
          * CPU-side fast RAM. */
         pos = snprintf(buffer, sizeof(buffer), "SLOW RAM");
     } else if (attrs & MEMF_FAST) {
-        if (address < 0x01000000) {
+        /* The DMA24 flag below already implies a 24-bit address; avoid
+         * two different 24-bit hints in one line (issue #26) */
+        if (attrs & MEMF_24BITDMA) {
+            pos = snprintf(buffer, sizeof(buffer), "FAST RAM");
+        } else if (address < 0x01000000) {
             pos = snprintf(buffer, sizeof(buffer), "FAST RAM (24bit)");
         } else {
             pos = snprintf(buffer, sizeof(buffer), "FAST RAM (32bit)");
@@ -72,7 +76,7 @@ const char *get_memory_type_string(UWORD attrs, APTR addr)
         pos += snprintf(buffer + pos, sizeof(buffer) - pos, ", KICK");
     }
     if (attrs & MEMF_24BITDMA) {
-        pos += snprintf(buffer + pos, sizeof(buffer) - pos, ", 24BitDMA");
+        pos += snprintf(buffer + pos, sizeof(buffer) - pos, ", DMA24");
     }
 
     return buffer;
@@ -102,6 +106,51 @@ void analyze_memory_region(struct MemHeader *mh, ULONG *chunks, ULONG *largest)
 
     *chunks = count;
     *largest = max_size;
+}
+
+/*
+ * Find the live Exec memory header for a stored region.
+ */
+static struct MemHeader *find_region_header(MemoryRegion *region)
+{
+    struct MemHeader *mh;
+
+    if (!region) return NULL;
+
+    for (mh = (struct MemHeader *)SysBase->MemList.lh_Head;
+         (struct Node *)mh != (struct Node *)&SysBase->MemList.lh_Tail;
+         mh = (struct MemHeader *)mh->mh_Node.ln_Succ) {
+        if (mh == region->memListNode ||
+            (mh->mh_Lower == region->lower_bound &&
+             mh->mh_Upper == region->upper_bound)) {
+            return mh;
+        }
+    }
+
+    return NULL;
+}
+
+/*
+ * Find the largest currently free chunk in a memory header.
+ */
+static APTR find_largest_free_chunk(struct MemHeader *mh, ULONG *size)
+{
+    struct MemChunk *mc;
+    APTR chunk = NULL;
+    ULONG largest = 0;
+
+    if (size) *size = 0;
+    if (!mh) return NULL;
+
+    for (mc = mh->mh_First; mc != NULL; mc = mc->mc_Next) {
+        if (mc->mc_Bytes > largest) {
+            largest = mc->mc_Bytes;
+            chunk = (APTR)mc;
+        }
+    }
+
+    if (size) *size = largest;
+    return chunk;
 }
 
 /*
@@ -170,24 +219,18 @@ void enumerate_memory_regions(void)
 void refresh_memory_region(ULONG index)
 {
     struct MemHeader *mh;
-    ULONG i = 0;
 
     if (index >= memory_regions.count) return;
 
     Forbid();
 
-    for (mh = (struct MemHeader *)SysBase->MemList.lh_Head;
-         (struct Node *)mh != (struct Node *)&SysBase->MemList.lh_Tail;
-         mh = (struct MemHeader *)mh->mh_Node.ln_Succ) {
-
-        if (i == index) {
-            MemoryRegion *region = &memory_regions.regions[index];
-            region->first_free = mh->mh_First;
-            region->amount_free = mh->mh_Free;
-            analyze_memory_region(mh, &region->num_chunks, &region->largest_block);
-            break;
-        }
-        i++;
+    mh = find_region_header(&memory_regions.regions[index]);
+    if (mh) {
+        MemoryRegion *region = &memory_regions.regions[index];
+        region->memListNode = mh;
+        region->first_free = mh->mh_First;
+        region->amount_free = mh->mh_Free;
+        analyze_memory_region(mh, &region->num_chunks, &region->largest_block);
     }
 
     Permit();
@@ -200,6 +243,10 @@ void refresh_memory_region(ULONG index)
 ULONG measure_memory_speed(ULONG index)
 {
     MemoryRegion *region;
+    struct MemHeader *mh;
+    APTR chunk = NULL;
+    APTR buffer = NULL;
+    ULONG chunk_size = 0;
     ULONG buffer_size;
     ULONG bytes_per_sec = 0;
 
@@ -207,75 +254,46 @@ ULONG measure_memory_speed(ULONG index)
 
     region = &memory_regions.regions[index];
 
-    /* Use a reasonable buffer size - 64K for test reads */
-    buffer_size = 64 * 1024;
+    /*
+     * Allocate from the selected region without rewriting Exec's global
+     * memory list.  AllocAbs() will fail if this exact free chunk is no
+     * longer available.
+     */
+    Forbid();
 
-    /* Limit to largest available block (halved for safety margin) */
-    if (buffer_size > region->largest_block / 2) {
-        buffer_size = region->largest_block / 2;
+    mh = find_region_header(region);
+    if (mh) {
+        region->memListNode = mh;
+        region->first_free = mh->mh_First;
+        region->amount_free = mh->mh_Free;
+        analyze_memory_region(mh, &region->num_chunks, &region->largest_block);
+        chunk = find_largest_free_chunk(mh, &chunk_size);
+    }
+
+    buffer_size = 64 * 1024;
+    if (buffer_size > chunk_size / 2) {
+        buffer_size = chunk_size / 2;
     }
 
     /* Ensure reasonable minimum size */
     if (buffer_size < 256) {
         region->speed_measured = TRUE;
         region->speed_bytes_sec = 0;
+        Permit();
         return 0;
     }
 
-    /*
-        Mega magic: I want to allocate a buffer in exactly this region (to avoid any mem corruption)
-        So what to do (according to Thomas Richter):
-
-        Forbid()
-        Fetch my entry in the System Memlist
-        Save old head and tail of memlist
-        Save prev/next-pointer of my entry
-        set head and tail to my entry
-        set prev/next-pointer of my entry to myself
-        alloc mem (there is only one entry left!)
-        restore all pointers
-        Permit()
-    */
-
-    struct MemHeader *oldHead, *oldTail, *mh, *oldSucc, *oldPred, *oldTailPred;
-    APTR buffer = NULL;
-
-    Forbid();
-    oldHead = (struct MemHeader *)SysBase->MemList.lh_Head;
-    oldTail = (struct MemHeader *)SysBase->MemList.lh_Tail;
-    oldTailPred = (struct MemHeader *)SysBase->MemList.lh_TailPred;
-    mh = region->memListNode;
-    if (mh) {
-        oldSucc = (struct MemHeader *)mh->mh_Node.ln_Succ;
-        oldPred = (struct MemHeader *)mh->mh_Node.ln_Pred;
-        //now start modifying the lists!
-        SysBase->MemList.lh_Head = (struct Node *)mh;
-        SysBase->MemList.lh_Tail = (struct Node *)mh;
-        SysBase->MemList.lh_TailPred = NULL;
-        mh->mh_Node.ln_Succ = (struct Node *)mh;
-        mh->mh_Node.ln_Pred = (struct Node *)mh;
-        //AllocMem
-        buffer = AllocMem(buffer_size, region->mem_type | MEMF_CLEAR);
-        //restore the old pointers
-        SysBase->MemList.lh_Head = (struct Node *)oldHead;
-        SysBase->MemList.lh_Tail = (struct Node *)oldTail;
-        SysBase->MemList.lh_TailPred = (struct Node *)oldTailPred;
-        mh->mh_Node.ln_Succ = (struct Node *)oldSucc;
-        mh->mh_Node.ln_Pred = (struct Node *)oldPred;
-    }
+    buffer = AllocAbs(buffer_size, chunk);
     Permit();
 
-    if (buffer) { // we found memory
-        /* Use shared benchmark function (16 iterations) */
-        bytes_per_sec = measure_mem_read_speed((volatile ULONG *)buffer, buffer_size, 16);
+    if (buffer) {
+        bytes_per_sec = measure_mem_read_speed((volatile ULONG *)buffer,
+                                               buffer_size, 16);
         FreeMem(buffer, buffer_size);
-        region->speed_bytes_sec = bytes_per_sec;
-        region->speed_measured = TRUE;
-    } else {
-        region->speed_measured = TRUE; //got no membrain : nothing to try again!
-        region->speed_bytes_sec = 0;
-        bytes_per_sec = 0;
     }
+
+    region->speed_bytes_sec = bytes_per_sec;
+    region->speed_measured = TRUE;
     return bytes_per_sec;
 }
 
@@ -333,7 +351,8 @@ static void draw_memory_data(BOOL full_redraw)
     y += 10;
 
     /* Memory type */
-    draw_label_value(128, y, get_string(MSG_MEMORY_TYPE), region->type_string, 168);
+    draw_label_value_max(128, y, get_string(MSG_MEMORY_TYPE),
+                         region->type_string, 168, 618);
     y += 10;
 
     /* Priority */
@@ -372,7 +391,8 @@ static void draw_memory_data(BOOL full_redraw)
     y += 10;
 
     /* Node name */
-    draw_label_value(128, y, get_string(MSG_NODE_NAME), region->node_name, 168);
+    draw_label_value_max(128, y, get_string(MSG_NODE_NAME),
+                         region->node_name, 168, 618);
     y += 10;
 
     /* Memory speed - display in appropriate units */
@@ -473,7 +493,9 @@ void memory_view_handle_button(ButtonID id)
             if (app->memory_region_index >= 0 &&
                 app->memory_region_index < (LONG)memory_regions.count) {
                 show_status_overlay(get_string(MSG_MEASURING_SPEED));
+                Forbid();
                 measure_memory_speed(app->memory_region_index);
+                Permit();
                 hide_status_overlay();
             }
             break;

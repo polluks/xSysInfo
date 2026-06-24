@@ -492,13 +492,14 @@ void scan_scsi_devices(const char *handler_name, ULONG base_unit)
                     debug("  scsi: Found device ID %d: %s %s\n",
                           (LONG)target, (LONG)dev->manufacturer, (LONG)dev->model);
 
-                    if (scsi_device_list.count >= MAX_SCSI_DEVICES) {
-                        break;
-                    }
                 }
             }
 
             CloseDevice((struct IORequest *)io);
+
+            if (scsi_device_list.count >= MAX_SCSI_DEVICES) {
+                break;
+            }
         }
 
         if (scsi_device_list.count >= MAX_SCSI_DEVICES) {
@@ -544,6 +545,11 @@ static void format_size_mb(ULONG size_mb, char *buffer, ULONG bufsize)
     }
 }
 
+static void draw_scsi_field(WORD x, WORD y, const char *text, WORD max_x)
+{
+    draw_text_clipped(x, y, text, max_x - x);
+}
+
 /*
  * Draw the SCSI device information screen
  */
@@ -571,24 +577,15 @@ void draw_scsi_view(void)
     SetAPen(rp, COLOR_TEXT);
     SetBPen(rp, COLOR_PANEL_BG);
 
-    Move(rp, 28, y);
-    Text(rp, (CONST_STRPTR)get_string(MSG_SCSI_ID), strlen(get_string(MSG_SCSI_ID)));
-    Move(rp, 56, y);
-    Text(rp, (CONST_STRPTR)get_string(MSG_SCSI_TYPE), strlen(get_string(MSG_SCSI_TYPE)));
-    Move(rp, 112, y);
-    Text(rp, (CONST_STRPTR)get_string(MSG_SCSI_MANUF), strlen(get_string(MSG_SCSI_MANUF)));
-    Move(rp, 200, y);
-    Text(rp, (CONST_STRPTR)get_string(MSG_SCSI_MODEL), strlen(get_string(MSG_SCSI_MODEL)));
-    Move(rp, 328, y);
-    Text(rp, (CONST_STRPTR)get_string(MSG_SCSI_REV), strlen(get_string(MSG_SCSI_REV)));
-    Move(rp, 368, y);
-    Text(rp, (CONST_STRPTR)get_string(MSG_SCSI_MAXBLOCKS), strlen(get_string(MSG_SCSI_MAXBLOCKS)));
-    Move(rp, 448, y);
-    Text(rp, (CONST_STRPTR)get_string(MSG_SCSI_ANSI), strlen(get_string(MSG_SCSI_ANSI)));
-    Move(rp, 504, y);
-    Text(rp, (CONST_STRPTR)get_string(MSG_SCSI_REAL), strlen(get_string(MSG_SCSI_REAL)));
-    Move(rp, 560, y);
-    Text(rp, (CONST_STRPTR)get_string(MSG_SCSI_FORMAT), strlen(get_string(MSG_SCSI_FORMAT)));
+    draw_scsi_field(28, y, get_string(MSG_SCSI_ID), 56);
+    draw_scsi_field(56, y, get_string(MSG_SCSI_TYPE), 112);
+    draw_scsi_field(112, y, get_string(MSG_SCSI_MANUF), 200);
+    draw_scsi_field(200, y, get_string(MSG_SCSI_MODEL), 328);
+    draw_scsi_field(328, y, get_string(MSG_SCSI_REV), 368);
+    draw_scsi_field(368, y, get_string(MSG_SCSI_MAXBLOCKS), 448);
+    draw_scsi_field(448, y, get_string(MSG_SCSI_ANSI), 504);
+    draw_scsi_field(504, y, get_string(MSG_SCSI_REAL), 560);
+    draw_scsi_field(560, y, get_string(MSG_SCSI_FORMAT), SCREEN_WIDTH - 4);
 
     /* Draw device list panel */
     draw_panel(20, 46, 600, 130, NULL);
@@ -605,25 +602,19 @@ void draw_scsi_view(void)
 
         /* ID */
         snprintf(buffer, sizeof(buffer), "%d", dev->target_id);
-        Move(rp, 28, y);
-        Text(rp, (CONST_STRPTR)buffer, strlen(buffer));
+        draw_scsi_field(28, y, buffer, 56);
 
         /* Type */
-        Move(rp, 56, y);
-        Text(rp, (CONST_STRPTR)get_scsi_type_string(dev->device_type),
-             strlen(get_scsi_type_string(dev->device_type)));
+        draw_scsi_field(56, y, get_scsi_type_string(dev->device_type), 112);
 
         /* Manufacturer */
-        Move(rp, 112, y);
-        Text(rp, (CONST_STRPTR)dev->manufacturer, strlen(dev->manufacturer));
+        draw_scsi_field(112, y, dev->manufacturer, 200);
 
         /* Model */
-        Move(rp, 200, y);
-        Text(rp, (CONST_STRPTR)dev->model, strlen(dev->model));
+        draw_scsi_field(200, y, dev->model, 328);
 
         /* Revision */
-        Move(rp, 328, y);
-        Text(rp, (CONST_STRPTR)dev->revision, strlen(dev->revision));
+        draw_scsi_field(328, y, dev->revision, 368);
 
         /* MaxBlocks */
         if (dev->max_blocks > 0) {
@@ -631,31 +622,27 @@ void draw_scsi_view(void)
         } else {
             snprintf(buffer, sizeof(buffer), "0");
         }
-        Move(rp, 368, y);
-        Text(rp, (CONST_STRPTR)buffer, strlen(buffer));
+        draw_scsi_field(368, y, buffer, 448);
 
         /* ANSI version */
-        Move(rp, 448, y);
-        Text(rp, (CONST_STRPTR)get_scsi_ansi_string(dev->ansi_version),
-             strlen(get_scsi_ansi_string(dev->ansi_version)));
+        draw_scsi_field(448, y, get_scsi_ansi_string(dev->ansi_version), 504);
 
         /* Real size */
         format_size_mb(dev->real_size_mb, buffer, sizeof(buffer));
-        Move(rp, 504, y);
-        Text(rp, (CONST_STRPTR)buffer, strlen(buffer));
+        draw_scsi_field(504, y, buffer, 560);
 
         /* Format size */
         format_size_mb(dev->format_size_mb, buffer, sizeof(buffer));
-        Move(rp, 560, y);
-        Text(rp, (CONST_STRPTR)buffer, strlen(buffer));
+        draw_scsi_field(560, y, buffer, SCREEN_WIDTH - 4);
 
         y += 10;
     }
 
     if (scsi_device_list.count == 0) {
         SetAPen(rp, COLOR_TEXT);
-        Move(rp, 250, 100);
-        Text(rp, (CONST_STRPTR)get_string(MSG_SCSI_NO_DEVICES), strlen(get_string(MSG_SCSI_NO_DEVICES)));
+        SetBPen(rp, COLOR_PANEL_BG);
+        draw_scsi_field(250, 100, get_string(MSG_SCSI_NO_DEVICES),
+                        SCREEN_WIDTH - 4);
     }
 
     /* Draw EXIT button */

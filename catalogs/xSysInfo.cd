@@ -82,6 +82,9 @@ MMU
 MSG_VBR (//)
 VBR
 ;
+MSG_SSP (//)
+SSP
+;
 MSG_COMMENT (//)
 Comment
 ;
@@ -574,10 +577,13 @@ What can I say!
 ; Hardware toggle
 ;
 MSG_HARDWARE_STD (//)
-NORMAL
+OVERVIEW
+;
+MSG_HARDWARE_CPU (//)
+CPU
 ;
 MSG_HARDWARE_EXT (//)
-EXTENDED
+CHIPSET
 ;
 MSG_RAMSEY_CTRL (//)
 Ramsey control
@@ -773,4 +779,9 @@ Ux=UserX SW=Swapped MAP=Remapped BN=Bundled
 ;
 MSG_MMU_FLAGS7_HINT (//)
 IND=Indirect +=more flags
+;
+; A1000 86-pin edge connector (predates Zorro II)
+;
+MSG_SLOT_ZORRO (//)
+ZORRO
 ;

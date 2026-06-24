@@ -14,6 +14,12 @@
 #include <dos/filehandler.h>
 #include <devices/timer.h>
 #include <devices/trackdisk.h>
+#include <devices/newstyle.h>
+
+/* 64-bit trackdisk read via NSD; not in all NDK headers */
+#ifndef NSCMD_TD_READ64
+#define NSCMD_TD_READ64 0xC000
+#endif
 
 #include <proto/exec.h>
 #include <proto/dos.h>
@@ -34,6 +40,17 @@
 /* Global drive list */
 DriveList drive_list;
 
+/* Drive list pagination: the view shows one page of buttons at a time */
+#define DRIVES_PER_PAGE 10
+
+#define DRIVE_SPEED_FIRST_CHUNK (64UL * 1024UL)
+#define DRIVE_SPEED_HARD_CHUNK  (256UL * 1024UL)
+#define DRIVE_SPEED_TARGET_US   1000000UL
+#define DRIVE_SPEED_MAX_US      2000000UL
+#define DRIVE_SPEED_MAX_BYTES   (32UL * 1024UL * 1024UL)
+
+static ULONG drive_page = 0;
+
 /* External references */
 extern AppContext *app;
 extern Button buttons[];
@@ -51,7 +68,16 @@ extern struct DosLibrary *DOSBase;
 #define ID_LNFS_DOS     0x444F5306  /* 'DOS\6' */
 #define ID_LNFS_FFS     0x444F5307  /* 'DOS\7' */
 #define ID_SFS_BE       0x53465300  /* 'SFS\0' */
-#define ID_PFS          0x50465300  /* 'PFS\0' */
+#define ID_PFS0         0x50465300  /* 'PFS\0' */
+#define ID_PFS1         0x50465301  /* 'PFS\1' */
+#define ID_PFS2         0x50465302  /* 'PFS\2' */
+#define ID_PFS3         0x50465303  /* 'PFS\3' */
+#define ID_PDS0         0x50445300  /* 'PDS\0' */
+#define ID_PDS1         0x50445301  /* 'PDS\1' */
+#define ID_PDS2         0x50445302  /* 'PDS\2' */
+#define ID_PDS3         0x50445303  /* 'PDS\3' */
+
+#define OFS_BLOCK_OVERHEAD 24UL
 
 /*
  * Identify filesystem from DOS type
@@ -77,7 +103,14 @@ FilesystemType identify_filesystem(ULONG dos_type)
             return FS_LNFS_FFS;
         case ID_SFS_BE:
             return FS_SFS;
-        case ID_PFS:
+        case ID_PFS0:
+        case ID_PFS1:
+        case ID_PFS2:
+        case ID_PFS3:
+        case ID_PDS0:
+        case ID_PDS1:
+        case ID_PDS2:
+        case ID_PDS3:
             return FS_PFS;
         default:
             return FS_UNKNOWN;
@@ -104,6 +137,61 @@ const char *get_filesystem_string(FilesystemType fs)
     }
 }
 
+static BOOL is_ofs_filesystem(FilesystemType fs)
+{
+    switch (fs) {
+        case FS_OFS:
+        case FS_INTL_OFS:
+        case FS_DCACHE_OFS:
+        case FS_LNFS_OFS:
+            return TRUE;
+        default:
+            return FALSE;
+    }
+}
+
+static char dos_type_id_char(ULONG dos_type, ULONG shift)
+{
+    UBYTE ch = (UBYTE)(dos_type >> shift);
+
+    if (ch >= 32 && ch <= 126 && ch != '\\') {
+        return (char)ch;
+    }
+    return '?';
+}
+
+static void format_dos_type_string(ULONG dos_type, char *buffer, ULONG size)
+{
+    if (!buffer || size == 0) return;
+
+    snprintf(buffer, size, "%c%c%c\\%lu",
+             dos_type_id_char(dos_type, 24),
+             dos_type_id_char(dos_type, 16),
+             dos_type_id_char(dos_type, 8),
+             (unsigned long)(dos_type & 0xff));
+}
+
+void format_filesystem_display(const DriveInfo *drive, char *buffer,
+                               ULONG size)
+{
+    const char *name;
+    char dos_type[16];
+
+    if (!buffer || size == 0) return;
+    buffer[0] = '\0';
+    if (!drive) return;
+
+    name = drive->fs_type == FS_UNKNOWN ?
+           "Unknown" : get_filesystem_string(drive->fs_type);
+
+    if (drive->has_dos_type) {
+        format_dos_type_string(drive->dos_type, dos_type, sizeof(dos_type));
+        snprintf(buffer, size, "%s (%s)", name, dos_type);
+    } else {
+        snprintf(buffer, size, "%s", name);
+    }
+}
+
 /*
  * Get disk state string
  */
@@ -117,21 +205,81 @@ const char *get_disk_state_string(DiskState state)
     }
 }
 
-/*
- * Get block size to display (adjusts for OFS overhead)
- */
 ULONG get_display_block_size(const DriveInfo *drive)
+{
+    if (!drive) return 0;
+
+    if (drive->bytes_per_block) {
+        return drive->bytes_per_block;
+    }
+
+    if (drive->has_info && drive->info_bytes_per_block) {
+        if (is_ofs_filesystem(drive->fs_type) &&
+            drive->info_bytes_per_block > OFS_BLOCK_OVERHEAD) {
+            return drive->info_bytes_per_block + OFS_BLOCK_OVERHEAD;
+        }
+        return drive->info_bytes_per_block;
+    }
+
+    return 0;
+}
+
+ULONG get_filesystem_block_size(const DriveInfo *drive)
 {
     ULONG block_size;
 
     if (!drive) return 0;
 
-    block_size = drive->bytes_per_block;
-    if (drive->fs_type == FS_OFS && block_size >= 24) {
-        block_size -= 24;
+    block_size = drive->filesystem_bytes_per_block;
+    if (block_size == 0) {
+        block_size = get_display_block_size(drive);
     }
 
     return block_size;
+}
+
+void format_block_size_display(const DriveInfo *drive, char *buffer,
+                               ULONG size)
+{
+    ULONG block_size;
+    ULONG filesystem_block_size;
+    ULONG payload_block_size = 0;
+
+    if (!buffer || size == 0) return;
+
+    block_size = get_display_block_size(drive);
+    filesystem_block_size = get_filesystem_block_size(drive);
+    if (drive && is_ofs_filesystem(drive->fs_type) &&
+        filesystem_block_size > OFS_BLOCK_OVERHEAD) {
+        payload_block_size = filesystem_block_size - OFS_BLOCK_OVERHEAD;
+    }
+
+    if (payload_block_size != 0 &&
+        filesystem_block_size != 0 && filesystem_block_size != block_size) {
+        snprintf(buffer, size,
+                 "%lu bytes (filesystem %lu bytes, payload %lu bytes)",
+                 (unsigned long)block_size,
+                 (unsigned long)filesystem_block_size,
+                 (unsigned long)payload_block_size);
+    } else if (payload_block_size != 0) {
+        snprintf(buffer, size, "%lu bytes (payload %lu bytes)",
+                 (unsigned long)block_size,
+                 (unsigned long)payload_block_size);
+    } else if (filesystem_block_size != 0 &&
+               filesystem_block_size != block_size) {
+        snprintf(buffer, size, "%lu bytes (filesystem %lu bytes)",
+                 (unsigned long)block_size,
+                 (unsigned long)filesystem_block_size);
+    } else {
+        snprintf(buffer, size, "%lu bytes", (unsigned long)block_size);
+    }
+}
+
+static ULONG get_geometry_total_blocks(const DriveInfo *drive)
+{
+    if (!drive) return 0;
+    if (drive->geometry_total_blocks) return drive->geometry_total_blocks;
+    return drive->total_blocks;
 }
 
 /*
@@ -223,7 +371,10 @@ static void scan_dos_list(void)
     debug("  drives: DosList locked\n");
 
     while ((dol = MyNextDosEntry(dol, LDF_DEVICES)) != NULL) {
-        if (drive_list.count >= MAX_DRIVES) break;
+        if (drive_list.count >= MAX_DRIVES) {
+            debug("  drives: MAX_DRIVES reached, skipping remaining devices\n");
+            break;
+        }
         buffer[0] = '\0';
         DriveInfo *drive = &drive_list.drives[drive_list.count];
         drive->is_valid = FALSE;
@@ -233,7 +384,9 @@ static void scan_dos_list(void)
         snprintf(drive->device_name, sizeof(drive->device_name), "%s:",
                      buffer);
 
-        debug("  drives: Found device '%s'\n", (LONG)drive->device_name);
+        debug("  drives: Found device '%s' task=$%08lx startup=$%08lx\n",
+              (LONG)drive->device_name, (ULONG)dol->dol_Task,
+              (ULONG)dol->dol_misc.dol_handler.dol_Startup);
 
         /* Try to get startup info */
         if (dol->dol_misc.dol_handler.dol_Startup) {
@@ -257,20 +410,66 @@ static void scan_dos_list(void)
                     drive->low_cylinder = de->de_LowCyl;
                     drive->high_cylinder = de->de_HighCyl;
                     drive->bytes_per_block = de->de_SizeBlock << 2;
+                    if (drive->bytes_per_block != 0) {
+                        ULONG sectors_per_block = de->de_SectorPerBlock;
+
+                        if (sectors_per_block == 0) {
+                            sectors_per_block = 1;
+                        }
+                        if (sectors_per_block <=
+                            ULONG_MAX / drive->bytes_per_block) {
+                            drive->filesystem_bytes_per_block =
+                                drive->bytes_per_block * sectors_per_block;
+                        }
+                    }
                     drive->num_buffers = de->de_NumBuffers;
+
+                    if (de->de_TableSize >= 12) {
+                        drive->buf_mem_type = de->de_BufMemType;
+                        drive->has_buf_mem_type = TRUE;
+                    }
+                    if (de->de_TableSize >= 13) {
+                        drive->max_transfer = de->de_MaxTransfer;
+                        drive->has_max_transfer = TRUE;
+                    }
+                    if (de->de_TableSize >= 14) {
+                        drive->address_mask = de->de_Mask;
+                        drive->has_address_mask = TRUE;
+                    }
 
                     /* Get DOS type if available (de_DosType is at index 16) */
                     if (de->de_TableSize >= 16) {
                         drive->dos_type = de->de_DosType;
                         drive->fs_type = identify_filesystem(de->de_DosType);
+                        drive->has_dos_type = TRUE;
                     }
 
-                    /* Calculate total blocks */
-                    drive->total_blocks = (drive->high_cylinder - drive->low_cylinder + 1) *
-                                          drive->surfaces * drive->sectors_per_track;
+                    /* Calculate geometry blocks */
+                    drive->geometry_total_blocks =
+                        (drive->high_cylinder - drive->low_cylinder + 1) *
+                        drive->surfaces * drive->sectors_per_track;
+                    drive->total_blocks = drive->geometry_total_blocks;
+
+                    debug("  drives: %s DosEnvec type=$%08lX block=%lu total=%lu\n",
+                          (LONG)drive->device_name,
+                          (LONG)drive->dos_type,
+                          (LONG)drive->bytes_per_block,
+                          (LONG)drive->geometry_total_blocks);
+                    debug("  drives: %s DMA hints bufmem=$%08lx max=$%08lx mask=$%08lx\n",
+                          (LONG)drive->device_name,
+                          (LONG)(drive->has_buf_mem_type ? drive->buf_mem_type : 0),
+                          (LONG)(drive->has_max_transfer ? drive->max_transfer : 0),
+                          (LONG)(drive->has_address_mask ? drive->address_mask : 0));
 
                     drive->is_valid = TRUE;
+                } else {
+                    debug("  drives: %s envec=$%08lx tablesize=%lu not usable\n",
+                          (LONG)drive->device_name, (ULONG)de,
+                          (ULONG)(de && (ULONG)de > 0x100 ? de->de_TableSize : 0));
                 }
+            } else {
+                debug("  drives: %s startup is not a FSSM\n",
+                      (LONG)drive->device_name);
             }
         }
 
@@ -279,9 +478,11 @@ static void scan_dos_list(void)
             drive->disk_state = DISK_NO_DISK;
         }
 
-        if (drive->is_valid || drive->handler_name[0]) {
-            drive_list.count++;
-        }
+        /* Keep every DOS device for now; startup parsing is only
+         * enrichment. The final keep/drop decision happens after volume
+         * matching and Info(), so drives whose startup is not a plain
+         * FileSysStartupMsg (e.g. PiStorm mounters) still show up. */
+        drive_list.count++;
     }
 
     debug("  drives: Unlocking DosList...\n");
@@ -358,7 +559,7 @@ static void query_drive_details(void)
 
     for (i = 0; i < drive_list.count; i++) {
         DriveInfo *drive = &drive_list.drives[i];
-        BOOL is_floppy = is_floppy_device(drive->total_blocks);
+        BOOL is_floppy = is_floppy_device(get_geometry_total_blocks(drive));
         BOOL has_volume = drive->volume_name[0] != '\0';
         BPTR lock;
 
@@ -378,15 +579,50 @@ static void query_drive_details(void)
         }
 
         if (Info(lock, info)) {
-            drive->total_blocks = info->id_NumBlocks;
-            drive->blocks_used = info->id_NumBlocksUsed;
-            /* Only update block size if not set by DosEnvec (which gives physical size) */
+            FilesystemType info_fs_type;
+
+            drive->info_total_blocks = info->id_NumBlocks;
+            drive->info_blocks_used = info->id_NumBlocksUsed;
+            drive->info_bytes_per_block = info->id_BytesPerBlock;
+            drive->info_disk_type = info->id_DiskType;
+            drive->has_info = TRUE;
+            info_fs_type = identify_filesystem(drive->info_disk_type);
+
+            drive->total_blocks = drive->info_total_blocks;
+            drive->blocks_used = drive->info_blocks_used;
+            /* Preserve DosEnvec geometry size for raw device I/O if present. */
             if (drive->bytes_per_block == 0) {
-                drive->bytes_per_block = info->id_BytesPerBlock;
+                if (is_ofs_filesystem(info_fs_type) &&
+                    drive->info_bytes_per_block > OFS_BLOCK_OVERHEAD) {
+                    drive->bytes_per_block =
+                        drive->info_bytes_per_block + OFS_BLOCK_OVERHEAD;
+                } else {
+                    drive->bytes_per_block = drive->info_bytes_per_block;
+                }
             }
-            drive->dos_type = info->id_DiskType;
-            drive->fs_type = identify_filesystem(info->id_DiskType);
+            if (drive->filesystem_bytes_per_block == 0) {
+                if (is_ofs_filesystem(info_fs_type) &&
+                    drive->info_bytes_per_block > OFS_BLOCK_OVERHEAD) {
+                    drive->filesystem_bytes_per_block =
+                        drive->info_bytes_per_block + OFS_BLOCK_OVERHEAD;
+                } else {
+                    drive->filesystem_bytes_per_block =
+                        drive->info_bytes_per_block;
+                }
+            }
+            if (!drive->has_dos_type) {
+                drive->dos_type = drive->info_disk_type;
+                drive->fs_type = info_fs_type;
+                drive->has_dos_type = TRUE;
+            }
             drive->disk_errors = info->id_NumSoftErrors;
+
+            debug("  drives: %s Info type=$%08lX block=%lu total=%lu used=%lu\n",
+                  (LONG)drive->device_name,
+                  (LONG)drive->info_disk_type,
+                  (LONG)drive->info_bytes_per_block,
+                  (LONG)drive->info_total_blocks,
+                  (LONG)drive->info_blocks_used);
 
             /* Disk state */
             switch (info->id_DiskState) {
@@ -465,6 +701,36 @@ static void check_scsi_support_all(void)
 }
 
 /*
+ * Helper: Drop DOS devices that turned out not to be drives
+ *
+ * A row survives when anything disk-like was found for it: a parsed
+ * FileSysStartupMsg (handler name), a matched volume, or successful
+ * Info(). Plain I/O handlers like CON:, SER: or PRT: have none of
+ * these and are removed here.
+ */
+static void prune_drive_list(void)
+{
+    ULONG i, kept = 0;
+
+    for (i = 0; i < drive_list.count; i++) {
+        DriveInfo *drive = &drive_list.drives[i];
+
+        if (drive->is_valid || drive->handler_name[0] ||
+            drive->volume_name[0]) {
+            if (kept != i) {
+                drive_list.drives[kept] = *drive;
+            }
+            kept++;
+        } else {
+            debug("  drives: Dropping '%s' (no FSSM, volume or Info)\n",
+                  (LONG)drive->device_name);
+        }
+    }
+
+    drive_list.count = kept;
+}
+
+/*
  * Enumerate all drives
  */
 void enumerate_drives(void)
@@ -472,6 +738,7 @@ void enumerate_drives(void)
     debug("  drives: Starting enumeration...\n");
 
     memset(&drive_list, 0, sizeof(drive_list));
+    drive_page = 0;
     debug("  drives: Scan DosList...\n");
 
     /* First pass: Scan DosList for devices */
@@ -485,8 +752,12 @@ void enumerate_drives(void)
     /* Third pass: Query detailed info */
     query_drive_details();
 
+    debug("  drives: Prune non-drives...\n");
+    /* Fourth pass: Drop entries with no drive evidence */
+    prune_drive_list();
+
     debug("  drives: Check SCSI-support...\n");
-    /* Fourth pass: Check SCSI support */
+    /* Fifth pass: Check SCSI support */
     check_scsi_support_all();
 
     debug("  drives: Enumeration complete, found %ld drives\n", (LONG)drive_list.count);
@@ -535,7 +806,7 @@ BOOL check_disk_present(ULONG index)
     }
 
     /* Only check floppy-type devices */
-    if (!is_floppy_device(drive->total_blocks)) {
+    if (!is_floppy_device(get_geometry_total_blocks(drive))) {
         /* Non-floppy devices are assumed to have media present */
         return TRUE;
     }
@@ -591,6 +862,189 @@ BOOL check_disk_present(ULONG index)
 }
 
 /*
+ * Check whether an open device implements NSCMD_TD_READ64 via the
+ * New Style Device query.
+ */
+static BOOL nsd_supports_read64(struct IOStdReq *io)
+{
+    struct NSDeviceQueryResult nsdqr;
+    UWORD *cmd;
+    BYTE error;
+
+    memset(&nsdqr, 0, sizeof(nsdqr));
+
+    io->io_Command = NSCMD_DEVICEQUERY;
+    io->io_Data = &nsdqr;
+    io->io_Length = sizeof(nsdqr);
+
+    error = DoIO((struct IORequest *)io);
+    if (error != 0 || io->io_Actual < 16 ||
+        nsdqr.nsdqr_DeviceType != NSDEVTYPE_TRACKDISK ||
+        !nsdqr.nsdqr_SupportedCommands) {
+        return FALSE;
+    }
+
+    for (cmd = (UWORD *)nsdqr.nsdqr_SupportedCommands; *cmd; cmd++) {
+        if (*cmd == NSCMD_TD_READ64) return TRUE;
+    }
+    return FALSE;
+}
+
+static const char *drive_read_cmd_name(UWORD command)
+{
+    switch (command) {
+        case CMD_READ:
+            return "CMD_READ";
+        case TD_READ64:
+            return "TD_READ64";
+        case NSCMD_TD_READ64:
+            return "NSCMD_TD_READ64";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+static ULONG align_drive_transfer(ULONG size, ULONG block_size)
+{
+    if (block_size > 1) {
+        size -= size % block_size;
+    }
+    return size;
+}
+
+static BOOL drive_buffer_matches_mask(APTR buffer, ULONG size, ULONG mask)
+{
+    ULONG start;
+    ULONG end;
+    ULONG disallowed;
+    ULONG low_disallowed = 0;
+    ULONG bit = 1;
+    ULONG range_disallowed;
+
+    if (!buffer || size == 0 || mask == 0) {
+        return TRUE;
+    }
+
+    start = (ULONG)buffer;
+    end = start + size - 1;
+    if (end < start) {
+        return FALSE;
+    }
+
+    /*
+     * Low zero bits in de_Mask express buffer-start alignment, not that
+     * every byte in the transfer range must keep those bits clear.  A mask
+     * such as $7ffffffe accepts an even buffer start below 2 GB; checking
+     * the last byte against bit 0 would reject every even-sized transfer.
+     */
+    disallowed = ~mask;
+    while (bit != 0 && (mask & bit) == 0) {
+        low_disallowed |= bit;
+        bit <<= 1;
+    }
+    range_disallowed = disallowed & ~low_disallowed;
+
+    return ((start & disallowed) == 0 && (end & range_disallowed) == 0);
+}
+
+static APTR alloc_masked_drive_buffer(ULONG size, ULONG flags, ULONG mask,
+                                      const char *label, ULONG *used_flags)
+{
+    APTR buffer;
+
+    buffer = AllocMem(size, flags | MEMF_CLEAR);
+    if (!buffer) {
+        debug("  drives: Buffer allocation failed using %s flags $%08lx\n",
+              (LONG)label, (ULONG)flags);
+        return NULL;
+    }
+
+    if (!drive_buffer_matches_mask(buffer, size, mask)) {
+        debug("  drives: Buffer %s at $%08lx size %lu rejected by mask $%08lx\n",
+              (LONG)label, (ULONG)buffer, (ULONG)size, (ULONG)mask);
+        FreeMem(buffer, size);
+        return NULL;
+    }
+
+    if (used_flags) {
+        *used_flags = flags;
+    }
+    debug("  drives: Buffer %s at $%08lx size %lu flags $%08lx\n",
+          (LONG)label, (ULONG)buffer, (ULONG)size, (ULONG)flags);
+
+    return buffer;
+}
+
+static APTR alloc_drive_speed_buffer(const DriveInfo *drive, ULONG size,
+                                     BOOL safe_retry, BOOL *can_retry,
+                                     ULONG *used_flags)
+{
+    ULONG mask = 0;
+    APTR buffer;
+
+    if (can_retry) {
+        *can_retry = FALSE;
+    }
+    if (drive->has_address_mask && drive->address_mask != 0) {
+        mask = drive->address_mask;
+    }
+
+    if (safe_retry) {
+        buffer = alloc_masked_drive_buffer(size, MEMF_CHIP | MEMF_PUBLIC,
+                                           mask, "safe-chip-public",
+                                           used_flags);
+        if (buffer) return buffer;
+        return alloc_masked_drive_buffer(size, MEMF_CHIP, mask, "safe-chip",
+                                         used_flags);
+    }
+
+    if (drive->has_buf_mem_type && drive->buf_mem_type != 0) {
+        if (can_retry && mask == 0 &&
+            (drive->buf_mem_type & MEMF_CHIP) == 0) {
+            *can_retry = TRUE;
+        }
+        buffer = alloc_masked_drive_buffer(size, drive->buf_mem_type, mask,
+                                           "DosEnvec", used_flags);
+        if (buffer) return buffer;
+
+        if (can_retry) {
+            *can_retry = FALSE;
+        }
+        debug("  drives: Falling back from DosEnvec buffer flags $%08lx\n",
+              (ULONG)drive->buf_mem_type);
+        buffer = alloc_masked_drive_buffer(size, MEMF_CHIP | MEMF_PUBLIC,
+                                           mask, "fallback-chip-public",
+                                           used_flags);
+        if (buffer) return buffer;
+        return alloc_masked_drive_buffer(size, MEMF_CHIP, mask,
+                                         "fallback-chip", used_flags);
+    }
+
+    if (can_retry && mask == 0) {
+        *can_retry = TRUE;
+    }
+
+    buffer = alloc_masked_drive_buffer(size, MEMF_FAST, mask, "fast",
+                                       used_flags);
+    if (buffer) return buffer;
+
+    buffer = alloc_masked_drive_buffer(size, MEMF_ANY, mask, "any",
+                                       used_flags);
+    if (buffer) return buffer;
+
+    if (mask != 0) {
+        buffer = alloc_masked_drive_buffer(size, MEMF_CHIP | MEMF_PUBLIC,
+                                           mask, "masked-chip-public",
+                                           used_flags);
+        if (buffer) return buffer;
+        return alloc_masked_drive_buffer(size, MEMF_CHIP, mask, "masked-chip",
+                                         used_flags);
+    }
+
+    return NULL;
+}
+
+/*
  * Measure drive speed (bytes/second)
  */
 ULONG measure_drive_speed(ULONG index)
@@ -607,12 +1061,22 @@ ULONG measure_drive_speed(ULONG index)
     struct EClockVal start, end;
     uint64_t elapsed;
     ULONG bytes_per_sec = 0;
-    ULONG num_reads;
-    ULONG read_offset;
+    ULONG num_reads = 0;
+    ULONG max_test_bytes;
+    ULONG target_us = 0;
+    ULONG max_us = 0;
+    ULONG min_reads = 1;
+    ULONG reads_done = 0;
+    ULONG read_length;
+    ULONG used_buffer_flags = 0;
+    UWORD read_cmd = CMD_READ;
     uint64_t read_offset_bytes = 0;
-    ULONG i;
+    uint64_t offset64;
     BYTE error;
     BOOL is_floppy;
+    BOOL read_failed = FALSE;
+    BOOL safe_buffer_retry = FALSE;
+    BOOL can_retry_safe_buffer = FALSE;
 
     if (!benchmark_timer_available()) return 0;
 
@@ -636,19 +1100,39 @@ ULONG measure_drive_speed(ULONG index)
 
     /* Determine block size and buffer size based on device type */
     block_size = drive->bytes_per_block ? drive->bytes_per_block : 512;
-    is_floppy = is_floppy_device(drive->total_blocks);
+    is_floppy = is_floppy_device(get_geometry_total_blocks(drive));
     if (is_floppy) {
         /* Floppy: read small amount (one track worth) */
         buffer_size = 11 * 512;  /* 11 sectors * 512 bytes */
         num_reads = 2;
+        max_test_bytes = buffer_size * num_reads;
     } else {
-        /* Hard drive: read larger blocks */
-        buffer_size = 256 * 1024;  /* 256 KB */
-        num_reads = 8;
+        buffer_size = DRIVE_SPEED_HARD_CHUNK;
+        max_test_bytes = DRIVE_SPEED_MAX_BYTES;
+        target_us = DRIVE_SPEED_TARGET_US;
+        max_us = DRIVE_SPEED_MAX_US;
+        min_reads = 2;
     }
     if (block_size == 0) block_size = 512;
     if (buffer_size < block_size) buffer_size = block_size;
-    if (block_size > 1) buffer_size -= buffer_size % block_size;
+    buffer_size = align_drive_transfer(buffer_size, block_size);
+    if (buffer_size < block_size) buffer_size = block_size;
+    if (drive->has_max_transfer && drive->max_transfer != 0 &&
+        drive->max_transfer < buffer_size) {
+        ULONG capped = align_drive_transfer(drive->max_transfer, block_size);
+
+        if (capped >= block_size) {
+            buffer_size = capped;
+            debug("  drives: Capping speed read size to MaxTransfer %lu\n",
+                  (ULONG)buffer_size);
+        } else {
+            debug("  drives: Ignoring MaxTransfer %lu smaller than block %lu\n",
+                  (ULONG)drive->max_transfer, (ULONG)block_size);
+        }
+    }
+    if (max_test_bytes < buffer_size) {
+        max_test_bytes = buffer_size;
+    }
 
     /* Create message port */
     port = CreateMsgPort();
@@ -676,18 +1160,29 @@ ULONG measure_drive_speed(ULONG index)
     }
     device_opened = TRUE;
 
-    /* Allocate buffer - try fast memory first for hard drives, fall back to any */
-    buffer = AllocMem(buffer_size, MEMF_FAST | MEMF_CLEAR);
-    if (!buffer) {
-        buffer = AllocMem(buffer_size, MEMF_ANY | MEMF_CLEAR);
+retry_speed_test:
+    if (buffer) {
+        FreeMem(buffer, buffer_size);
+        buffer = NULL;
     }
+    total_read = 0;
+    elapsed = 0;
+    bytes_per_sec = 0;
+    reads_done = 0;
+    read_failed = FALSE;
+    read_cmd = CMD_READ;
+    can_retry_safe_buffer = FALSE;
+    used_buffer_flags = 0;
 
+    buffer = alloc_drive_speed_buffer(drive, buffer_size, safe_buffer_retry,
+                                      &can_retry_safe_buffer,
+                                      &used_buffer_flags);
     if (!buffer) {
         debug("  drives: Failed to allocate buffer\n");
         goto cleanup;
     }
 
-    /* Calculate read offset - start from low cylinder, clamp to 32-bit */
+    /* Calculate read offset - start from low cylinder */
     if (drive->surfaces && drive->sectors_per_track) {
         read_offset_bytes = (uint64_t)drive->low_cylinder *
                             (uint64_t)drive->surfaces *
@@ -700,24 +1195,63 @@ ULONG measure_drive_speed(ULONG index)
         debug("  drives: Missing geometry, defaulting read offset to 0\n");
     }
 
-    if (read_offset_bytes > (uint64_t)(ULONG_MAX - buffer_size)) {
-        uint64_t limit = (uint64_t)(ULONG_MAX - buffer_size);
-        if (block_size > 1) limit -= limit % block_size;
-        read_offset_bytes = limit;
+    /* CMD_READ takes a 32-bit byte offset; partitions starting beyond
+     * 4 GB need one of the 64-bit read commands */
+    if (read_offset_bytes + (uint64_t)max_test_bytes > 0xFFFFFFFFULL) {
+        if (nsd_supports_read64(io)) {
+            read_cmd = NSCMD_TD_READ64;
+            debug("  drives: Using NSD TD_READ64 for offset beyond 4 GB\n");
+        } else {
+            read_cmd = TD_READ64;
+            debug("  drives: Trying TD64 TD_READ64 for offset beyond 4 GB\n");
+        }
     }
 
-    read_offset = (ULONG)read_offset_bytes;
-
-    debug("  drives: Speed test on %s unit %ld, %ld reads of %ld bytes at offset %ld\n",
+    debug("  drives: Speed test on %s unit %ld, cmd %s, chunk %lu max %lu target %lu us flags $%08lx at offset %lu MB ($%08lx:%08lx)\n",
           (LONG)drive->handler_name, (LONG)drive->unit_number,
-          (LONG)num_reads, (LONG)buffer_size, (LONG)read_offset);
+          (LONG)drive_read_cmd_name(read_cmd),
+          (ULONG)buffer_size, (ULONG)max_test_bytes, (ULONG)target_us,
+          (ULONG)used_buffer_flags,
+          (ULONG)(read_offset_bytes >> 20),
+          (ULONG)(read_offset_bytes >> 32), (ULONG)read_offset_bytes);
+
+    /* Untimed probe read; if the 64-bit command is not implemented,
+     * fall back to measuring at the start of the device instead of
+     * issuing reads at a wrapped 32-bit offset */
+    if (read_cmd != CMD_READ) {
+        io->io_Command = read_cmd;
+        io->io_Data = buffer;
+        io->io_Length = block_size;
+        io->io_Offset = (ULONG)read_offset_bytes;
+        io->io_Actual = (ULONG)(read_offset_bytes >> 32);
+
+        debug("  drives: Probe %s offset $%08lx:%08lx len %lu\n",
+              (LONG)drive_read_cmd_name(read_cmd),
+              (ULONG)(read_offset_bytes >> 32), (ULONG)read_offset_bytes,
+              (ULONG)block_size);
+
+        error = DoIO((struct IORequest *)io);
+        debug("  drives: Probe result error %ld io_Error %ld actual %lu\n",
+              (LONG)error, (LONG)io->io_Error, (ULONG)io->io_Actual);
+        if (error != 0 || io->io_Error != 0 ||
+            io->io_Actual != block_size) {
+            if (can_retry_safe_buffer && !safe_buffer_retry) {
+                debug("  drives: 64-bit probe failed, retrying with safe buffer\n");
+                safe_buffer_retry = TRUE;
+                goto retry_speed_test;
+            }
+            debug("  drives: 64-bit read probe failed, reading at offset 0 instead\n");
+            read_cmd = CMD_READ;
+            read_offset_bytes = 0;
+        }
+    }
 
     /* Warm up floppy by doing an untimed read to get the head on track */
     if (is_floppy) {
         io->io_Command = CMD_READ;
         io->io_Data = buffer;
         io->io_Length = block_size;
-        io->io_Offset = read_offset;
+        io->io_Offset = (ULONG)read_offset_bytes;
 
         error = DoIO((struct IORequest *)io);
         if (error != 0) {
@@ -725,33 +1259,88 @@ ULONG measure_drive_speed(ULONG index)
         }
     }
 
-    /* Get start time */
     E_Freq = read_benchmark_clock(&start);
-    Forbid();
 
     /* Perform reads */
-    for (i = 0; i < num_reads; i++) {
-        io->io_Command = CMD_READ;
+    while (TRUE) {
+        if (is_floppy) {
+            if (reads_done >= num_reads) {
+                break;
+            }
+        } else {
+            if (elapsed >= max_us && reads_done > 0) {
+                break;
+            }
+            if (reads_done >= min_reads && elapsed >= target_us) {
+                break;
+            }
+            if (total_read >= max_test_bytes) {
+                break;
+            }
+        }
+
+        read_length = buffer_size;
+        if (!is_floppy && read_length > DRIVE_SPEED_FIRST_CHUNK &&
+            (reads_done == 0 || elapsed > target_us / 4)) {
+            read_length = DRIVE_SPEED_FIRST_CHUNK;
+        }
+        if (read_length > max_test_bytes - total_read) {
+            read_length = max_test_bytes - total_read;
+        }
+        read_length = align_drive_transfer(read_length, block_size);
+        if (read_length < block_size) {
+            break;
+        }
+
+        offset64 = read_offset_bytes + (uint64_t)total_read;
+
+        io->io_Command = read_cmd;
         io->io_Data = buffer;
-        io->io_Length = buffer_size;
-        io->io_Offset = read_offset + (i * buffer_size);
+        io->io_Length = read_length;
+        io->io_Offset = (ULONG)offset64;
+        /* High 32 offset bits for the 64-bit read commands; CMD_READ
+         * ignores io_Actual on input and the offset fits 32 bits then */
+        io->io_Actual = (ULONG)(offset64 >> 32);
 
         error = DoIO((struct IORequest *)io);
-        if (error != 0) {
-            debug("  drives: Read error %ld at iteration %ld\n", (LONG)error, (LONG)i);
+        debug("  drives: Read %ld cmd %s offset $%08lx:%08lx len %lu error %ld io_Error %ld actual %lu\n",
+              (LONG)(reads_done + 1),
+              (LONG)drive_read_cmd_name(read_cmd),
+              (ULONG)(offset64 >> 32), (ULONG)offset64,
+              (ULONG)read_length, (LONG)error, (LONG)io->io_Error,
+              (ULONG)io->io_Actual);
+        if (error != 0 || io->io_Error != 0) {
+            debug("  drives: Read error %ld/%ld at iteration %ld\n",
+                  (LONG)error, (LONG)io->io_Error, (LONG)reads_done);
+            read_failed = TRUE;
+            break;
+        }
+        if (io->io_Actual != read_length) {
+            debug("  drives: Short read at iteration %ld: expected %lu got %lu\n",
+                  (LONG)reads_done, (ULONG)read_length,
+                  (ULONG)io->io_Actual);
+            read_failed = TRUE;
             break;
         }
         total_read += io->io_Actual;
+        reads_done++;
+
+        E_Freq = read_benchmark_clock(&end);
+        elapsed = EClock_Diff_in_ms(&start, &end, E_Freq);
     }
 
-    /* Get end time */
-    Permit();
     E_Freq = read_benchmark_clock(&end);
 
     /* Calculate speed */
     elapsed = EClock_Diff_in_ms(&start, &end, E_Freq);
 
-    if (elapsed > 0 && total_read > 0) {
+    if (read_failed && can_retry_safe_buffer && !safe_buffer_retry) {
+        debug("  drives: Read failed, retrying with safe buffer\n");
+        safe_buffer_retry = TRUE;
+        goto retry_speed_test;
+    }
+
+    if (!read_failed && elapsed > 0 && total_read > 0) {
         /* Timer ticks are in microseconds */
         bytes_per_sec = (ULONG)(((uint64_t)total_read * 1000000ULL) / elapsed);
         drive->speed_bytes_sec = bytes_per_sec;
@@ -815,7 +1404,7 @@ static void draw_drives_data(BOOL full_redraw)
 
     if (app->selected_drive < 0 || app->selected_drive >= (LONG)drive_list.count) {
         SetAPen(rp, COLOR_TEXT);
-        Move(rp, 250, 12);
+        Move(rp, 250, 120);
         Text(rp, (CONST_STRPTR)get_string(MSG_DRIVES_NO_DRIVES_FOUND), strlen(get_string(MSG_DRIVES_NO_DRIVES_FOUND)));
     } else {
         drive = &drive_list.drives[app->selected_drive];
@@ -840,7 +1429,7 @@ static void draw_drives_data(BOOL full_redraw)
         }
         y += 9;
 
-        /* Total blocks - always show since it's a drive geometry property */
+        /* Total blocks */
         snprintf(buffer, sizeof(buffer), "%lu", (unsigned long)drive->total_blocks);
         draw_label_value(120, y, get_string(MSG_TOTAL_BLOCKS), buffer, 224);
         y += 9;
@@ -858,8 +1447,7 @@ static void draw_drives_data(BOOL full_redraw)
         if (drive->disk_state == DISK_NO_DISK) {
             snprintf(buffer, sizeof(buffer), "%s", get_string(MSG_DASH_PLACEHOLDER));
         } else {
-            ULONG display_block_size = get_display_block_size(drive);
-            snprintf(buffer, sizeof(buffer), "%lu", (unsigned long)display_block_size);
+            format_block_size_display(drive, buffer, sizeof(buffer));
         }
         draw_label_value(120, y, get_string(MSG_BYTES_PER_BLOCK), buffer, 224);
         y += 9;
@@ -868,8 +1456,9 @@ static void draw_drives_data(BOOL full_redraw)
         if (drive->disk_state == DISK_NO_DISK) {
             draw_label_value(120, y, get_string(MSG_DISK_TYPE), get_string(MSG_DISK_NO_DISK_INSERTED), 224);
         } else {
+            format_filesystem_display(drive, buffer, sizeof(buffer));
             draw_label_value(120, y, get_string(MSG_DISK_TYPE),
-                             get_filesystem_string(drive->fs_type), 224);
+                             buffer, 224);
         }
         y += 9;
 
@@ -942,6 +1531,12 @@ static void draw_drives_data(BOOL full_redraw)
     if (btn) draw_button(btn);
     btn = find_button(BTN_DRV_SPEED);
     if (btn) draw_button(btn);
+
+    /* Draw pager buttons (only added when the list spans pages) */
+    btn = find_button(BTN_DRV_PAGE_PREV);
+    if (btn) draw_button(btn);
+    btn = find_button(BTN_DRV_PAGE_NEXT);
+    if (btn) draw_button(btn);
 }
 
 /*
@@ -965,15 +1560,30 @@ void drives_view_update_buttons(void)
 {
     BOOL scsi_enabled = FALSE;
     BOOL speed_enabled = FALSE;
-    ULONG i;
+    ULONG i, first;
+    ULONG max_page;
     WORD y = 28;
 
-    /* Drive selection buttons */
-    for (i = 0; i < drive_list.count && i < 10; i++) {
+    /* Drive selection buttons, one page at a time */
+    max_page = drive_list.count ?
+               (drive_list.count - 1) / DRIVES_PER_PAGE : 0;
+    if (drive_page > max_page) drive_page = max_page;
+    first = drive_page * DRIVES_PER_PAGE;
+
+    for (i = first;
+         i < drive_list.count && i < first + DRIVES_PER_PAGE; i++) {
         add_button(10, y, 70, 12,
                    drive_list.drives[i].device_name,
                    (ButtonID)(BTN_DRV_DRIVE_BASE + i), TRUE);
         y += 14;
+    }
+
+    /* Pager below the drive buttons when the list spans pages */
+    if (drive_list.count > DRIVES_PER_PAGE) {
+        add_button(10, 170, 33, 12, "<", BTN_DRV_PAGE_PREV,
+                   drive_page > 0);
+        add_button(47, 170, 33, 12, ">", BTN_DRV_PAGE_NEXT,
+                   drive_page < max_page);
     }
 
     /* Check capabilities of selected drive */
@@ -981,7 +1591,10 @@ void drives_view_update_buttons(void)
         app->selected_drive < (LONG)drive_list.count) {
         DriveInfo *drive = &drive_list.drives[app->selected_drive];
         scsi_enabled = drive->scsi_supported;
-        speed_enabled = (drive->disk_state != DISK_NO_DISK);
+        /* Speed needs a disk and an exec device to read from; volume-only
+         * entries (RAM:, mounts without a parseable FSSM) have neither */
+        speed_enabled = (drive->disk_state != DISK_NO_DISK &&
+                         drive->handler_name[0] != '\0');
     }
 
     /* Action buttons */
@@ -991,6 +1604,19 @@ void drives_view_update_buttons(void)
                get_string(MSG_BTN_SPEED), BTN_DRV_SPEED, speed_enabled);
     add_button(220, 188, 52, 12,
                get_string(MSG_BTN_EXIT), BTN_DRV_EXIT, TRUE);
+}
+
+/*
+ * Redraw the drives view after a page flip: clear the drive button
+ * column first so a shorter page leaves no stale button images behind.
+ */
+static void flip_drive_page(void)
+{
+    SetAPen(app->rp, COLOR_BACKGROUND);
+    RectFill(app->rp, 10, 28, 79, 166);
+
+    update_button_states();
+    draw_drives_view();
 }
 
 /*
@@ -1018,6 +1644,20 @@ void drives_view_handle_button(ButtonID id)
                 show_status_overlay(get_string(MSG_MEASURING_SPEED));
                 measure_drive_speed(app->selected_drive);
                 hide_status_overlay();
+            }
+            break;
+
+        case BTN_DRV_PAGE_PREV:
+            if (drive_page > 0) {
+                drive_page--;
+                flip_drive_page();
+            }
+            break;
+
+        case BTN_DRV_PAGE_NEXT:
+            if ((drive_page + 1) * DRIVES_PER_PAGE < drive_list.count) {
+                drive_page++;
+                flip_drive_page();
             }
             break;
 

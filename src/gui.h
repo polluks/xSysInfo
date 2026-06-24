@@ -49,8 +49,12 @@ typedef enum {
     BTN_DRV_EXIT,
     BTN_DRV_SCSI,
     BTN_DRV_SPEED,
+    BTN_DRV_PAGE_PREV,      /* Drive list pager */
+    BTN_DRV_PAGE_NEXT,
 
-    /* Boards view button */
+    /* Boards view buttons */
+    BTN_BOARD_PREV,
+    BTN_BOARD_NEXT,
     BTN_BOARD_EXIT,
 
     /* SCSI view button */
@@ -83,12 +87,12 @@ typedef struct {
 #define SOFTWARE_PANEL_X    0
 #define SOFTWARE_PANEL_Y    24
 #define SOFTWARE_PANEL_W    366
-#define SOFTWARE_PANEL_H    77
+#define SOFTWARE_PANEL_H    74
 
 #define SPEED_PANEL_X       0
-#define SPEED_PANEL_Y       102
+#define SPEED_PANEL_Y       98
 #define SPEED_PANEL_W       366
-#define SPEED_PANEL_H       98
+#define SPEED_PANEL_H       102
 
 #define HARDWARE_PANEL_X    368
 #define HARDWARE_PANEL_Y    24
@@ -136,6 +140,9 @@ void draw_text(WORD x, WORD y, const char *text, UBYTE color);
 void draw_text_right(WORD x, WORD y, WORD width, const char *text, UBYTE color);
 void draw_text_centered(WORD x, WORD y, WORD width, const char *text, UBYTE color);
 void draw_label_value(WORD x, WORD y, const char *label, const char *value, WORD offset);
+void draw_label_value_max(WORD x, WORD y, const char *label,
+                          const char *value, WORD offset, WORD max_x);
+void draw_text_clipped(WORD x, WORD y, const char *text, WORD max_width);
 
 /* Bar graph drawing */
 void draw_speed_bars(void);

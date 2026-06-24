@@ -43,6 +43,7 @@ typedef enum {
     MSG_FPU,
     MSG_MMU,
     MSG_VBR,
+    MSG_SSP,
     MSG_COMMENT,
     MSG_HORIZ_KHZ,
     MSG_ECLOCK_HZ,
@@ -233,6 +234,7 @@ typedef enum {
 
     /* Hardware toggle */
     MSG_HARDWARE_STD,
+    MSG_HARDWARE_CPU,
     MSG_HARDWARE_EXT,
     MSG_RAMSEY_CTRL,
     MSG_SDMAC_REV,
@@ -299,6 +301,7 @@ typedef enum {
     MSG_MMU_FLAGS5_HINT,
     MSG_MMU_FLAGS6_HINT,
     MSG_MMU_FLAGS7_HINT,
+    MSG_SLOT_ZORRO,
     MSG_COUNT  /* Total number of strings */
 } LocaleStringID;
 

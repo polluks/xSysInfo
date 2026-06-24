@@ -84,6 +84,9 @@ MMU
 MSG_VBR
 VBR
 ;
+MSG_SSP
+SSP
+;
 MSG_COMMENT
 Komentarz
 ;
@@ -576,10 +579,13 @@ Co tu powiedziec!
 ; Hardware toggle
 ;
 MSG_HARDWARE_STD
-NORMALNY
+PRZEGL¡D
+;
+MSG_HARDWARE_CPU
+CPU
 ;
 MSG_HARDWARE_EXT
-ROZSZERZONY
+CHIPSET
 ;
 MSG_RAMSEY_CTRL
 Kontrola Ramsey
@@ -775,4 +781,7 @@ Ux=UserX SW=Swap MAP=Mapowane BN=Bundled
 ;
 MSG_MMU_FLAGS7_HINT
 IND=Posrednie +=wiecej flag
+;
+MSG_SLOT_ZORRO
+ZORRO
 ;

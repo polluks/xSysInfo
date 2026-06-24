@@ -8,6 +8,9 @@ xsysinfo.adf
 xsysinfo-*.adf
 xsysinfo-*.lha
 /TinySetPatch
+/Stack
 
 /src/*.hunk
 /extern/
+
+**/.DS_Store

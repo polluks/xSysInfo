@@ -5,7 +5,7 @@
 
 ADATE   := $(shell date '+%-d.%-m.%Y')
 # FULL_VERSION is 42.xx-yy-dirty
-FULL_VERSION ?= $(shell git describe --tags --dirty | sed -r 's/^release_//')
+FULL_VERSION ?= $(shell git describe --tags --dirty | sed -E 's/^release_//; s/^v//')
 PROG_VERSION := $(shell echo $(FULL_VERSION) | cut -f1 -d\.)
 PROG_REVISION := $(shell echo $(FULL_VERSION) | cut -f2 -d\.|cut -f1 -d\-)
 
@@ -20,7 +20,7 @@ NDK_PATH ?= $(shell realpath $$(dirname $$(which $(CC)))/../m68k-amigaos/ndk-inc
 IDENTIFY_INC = 3rdparty/identify/reference
 MMU_INC = 3rdparty/mmu/reference
 
-CFLAGS = -O2 -m68000 -mtune=68020-60 -Wa,-m68881 -msoft-float -noixemul -Wall -Wextra \
+CFLAGS = -Os -m68000 -mtune=68020-60 -Wa,-m68881 -msoft-float -noixemul -Wall -Wextra \
          -I$(IDENTIFY_INC) \
          -I$(MMU_INC) \
          -DXSYSINFO_DATE="\"$(ADATE)\"" -DXSYSINFO_VERSION="\"$(FULL_VERSION)\"" \
@@ -53,8 +53,14 @@ ASM_SRCS = src/cpu.S src/berr_trap.S
 TINYSETPATCH_DIR = 3rdparty/TinySetPatch
 TINYSETPATCH_SRC = $(TINYSETPATCH_DIR)/TinySetPatch.S
 TINYSETPATCH_BIN = $(TINYSETPATCH_DIR)/TinySetPatch
+STACK = Stack
+STACK_SRC = src/Stack.c
+STACK_OBJ = src/Stack.o
+STACK_CFLAGS = $(filter-out -flto%,$(CFLAGS)) -fno-lto
 
 OBJS = $(SRCS:.c=.o)
+
+BENCH_OBJS = src/benchmark.o src/dhry_1.o src/dhry_2.o
 
 ASM_OBJS = $(ASM_SRCS:.S=.o)
 
@@ -101,7 +107,9 @@ mmu: $(FLEXCAT_BIN)
 # Catalog definitions - maps source directory to AmigaOS language name
 CATALOG_DESC = catalogs/xSysInfo.cd
 CATALOG_DIR = catalogs/build
-CATALOG_LANGS = german:deutsch french:français italian:italiano turkish:türkçe polish:polski
+CATALOG_LANGS = german:deutsch french:français italian:italiano \
+		turkish:türkçe polish:polski portuguese:português \
+		hungarian:magyar
 
 # Build all catalogs
 catalogs: $(FLEXCAT_BIN)
@@ -142,9 +150,22 @@ $(TARGET): $(OBJS) $(ASM_OBJS)
 	@$(STRIP) $@
 	@wc -c < "$@" | awk '{printf "$@ successfully compiled (%s bytes)\n", $$1}'
 
+$(STACK): $(STACK_OBJ)
+	@echo "  LINK  $@"
+	@$(CC) -nostartfiles -nostdlib -o $@ $(STACK_OBJ)
+	@echo "  STRIP $@"
+	@$(STRIP) $@
+	@wc -c < "$@" | awk '{printf "$@ successfully compiled (%s bytes)\n", $$1}'
+
+$(STACK_OBJ): $(STACK_SRC)
+	@echo "  CC    $@"
+	@$(CC) $(STACK_CFLAGS) -c -o $@ $<
+
 $(OBJS): src/%.o: src/%.c src/xsysinfo.h
 	@echo "  CC    $@"
 	@$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BENCH_OBJS): CFLAGS += -O2
 
 $(ASM_OBJS): src/%.o: src/%.S
 	@echo "  ASM   $@"
@@ -152,7 +173,7 @@ $(ASM_OBJS): src/%.o: src/%.S
 
 clean:
 	@echo "  CLEAN"
-	@rm -f $(OBJS) $(ASM_OBJS) $(TARGET) TinySetPatch
+	@rm -f $(OBJS) $(ASM_OBJS) $(STACK_OBJ) $(TARGET) TinySetPatch $(STACK)
 	@rm -rf $(CATALOG_DIR)
 	@rm -f xsysinfo-*.lha
 	@$(MAKE) -s -C 3rdparty/flexcat clean
@@ -189,8 +210,8 @@ MU_MANUAL_LHA = $(DOWNLOAD_DIR)/MuManual.lha
 # MD5 checksums for verification
 IDENTIFY_USR_MD5 = f8bd9feb9fa595bea979755224d08c5c
 IDENTIFY_PCI_MD5 = 7771426e5c7a5e3dc882a973029099d1
-OPENPCI_MD5 = b0bdadfdcec7d9aa86722124263a5b78
-MMULIB_MD5 = 5d07a2dc0f495a9c6790fa7d1df43f1d
+OPENPCI_MD5 = d13549ab7f294a1d6bdd71de0d5644d0
+MMULIB_MD5 = 0c80b6286f0c46f037c8e8ef15bb1b14
 MU_MANUAL_MD5 = 98ce060266ec1ac2dece921f431253b1
 
 .PHONY: identify-all disk download-libs
@@ -310,7 +331,7 @@ download-libs: $(IDENTIFY_USR_LHA) $(IDENTIFY_PCI_LHA) $(OPENPCI_LHA) $(MMULIB_L
 	# Extract MMULib
 	@echo "  UNPACK $(MMULIB_LHA)"
 	@lha xq $(MMULIB_LHA) MMULib/Libs/mmu.library \
-		MMULib/Libs/680x0.library MMULib/Libs/68020.library \
+		MMULib/Libs/68020.library \
 		MMULib/Libs/68030.library MMULib/Libs/68040.library \
 		MMULib/Libs/68060.library
 	@mv MMULib/Libs/mmu.library 3rdparty/identify/build/
@@ -352,7 +373,7 @@ TinySetPatch: $(TINYSETPATCH_SRC) $(TINYSETPATCH_DIR)/Makefile Makefile
 	@$(MAKE) -s -C $(TINYSETPATCH_DIR) TinySetPatch VASM=$(VASM) NDK_PATH="$(NDK_PATH)"
 	@cp $(TINYSETPATCH_BIN) $@
 
-disk: $(TARGET) download-libs TinySetPatch
+disk: $(TARGET) download-libs TinySetPatch $(STACK)
 	@echo "  DISK"
 	@xdftool $(DISK) format "xSysInfo"
 	@xdftool $(DISK) write $(TARGET) $(TARGET)
@@ -361,13 +382,14 @@ disk: $(TARGET) download-libs TinySetPatch
 	@xdftool $(DISK) makedir Libs
 	@xdftool $(DISK) write 3rdparty/identify/build/identify.library Libs/identify.library
 	@xdftool $(DISK) write 3rdparty/identify/build/openpci.library Libs/openpci.library
-	@for lib in mmu 680x0 68020 68030 68040 68060; do \
+	@for lib in mmu 68020 68030 68040 68060; do \
 		xdftool $(DISK) write 3rdparty/identify/build/$$lib.library Libs/$$lib.library; \
 	done
 	@xdftool $(DISK) makedir S
 	@xdftool $(DISK) write Startup-Sequence S/Startup-Sequence
 	@xdftool $(DISK) write 3rdparty/identify/build/pci.db S/pci.db
 	@xdftool $(DISK) makedir C
+	@xdftool $(DISK) write $(STACK) C/Stack
 	@xdftool $(DISK) write TinySetPatch C/TinySetPatch
 	@xdftool $(DISK) boot install
 	@xdftool $(DISK) info

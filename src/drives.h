@@ -46,15 +46,29 @@ typedef struct {
     DiskState disk_state;
     ULONG total_blocks;
     ULONG blocks_used;
-    ULONG bytes_per_block;
+    ULONG bytes_per_block;      /* Device/geometry block size */
+    ULONG filesystem_bytes_per_block; /* Logical/filesystem block size */
+    ULONG geometry_total_blocks;
+    ULONG info_total_blocks;
+    ULONG info_blocks_used;
+    ULONG info_bytes_per_block;
+    ULONG info_disk_type;
     FilesystemType fs_type;
     ULONG dos_type;             /* Raw DOS type */
+    BOOL has_dos_type;          /* TRUE if dos_type came from DosEnvec/Info */
+    BOOL has_info;              /* TRUE if Info() populated volume stats */
     ULONG surfaces;
     ULONG sectors_per_track;
     ULONG reserved_blocks;
     ULONG low_cylinder;
     ULONG high_cylinder;
     ULONG num_buffers;
+    ULONG buf_mem_type;
+    ULONG max_transfer;
+    ULONG address_mask;
+    BOOL has_buf_mem_type;
+    BOOL has_max_transfer;
+    BOOL has_address_mask;
     ULONG speed_bytes_sec;      /* 0 = not measured */
     ULONG disk_errors;
     BOOL speed_measured;
@@ -77,6 +91,11 @@ void refresh_drive_info(ULONG index);
 ULONG measure_drive_speed(ULONG index);
 BOOL check_disk_present(ULONG index);
 ULONG get_display_block_size(const DriveInfo *drive);
+ULONG get_filesystem_block_size(const DriveInfo *drive);
+void format_block_size_display(const DriveInfo *drive, char *buffer,
+                               ULONG size);
+void format_filesystem_display(const DriveInfo *drive, char *buffer,
+                               ULONG size);
 
 /* Helper functions */
 const char *get_disk_state_string(DiskState state);

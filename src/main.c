@@ -35,6 +35,7 @@
 #include "boards.h"
 #include "drives.h"
 #include "benchmark.h"
+#include "print.h"
 #include "locale_str.h"
 #include "debug.h"
 
@@ -56,8 +57,14 @@ static struct WBStartup *wb_startup = NULL;
 /* Global debug flag */
 BOOL g_debug_enabled = FALSE;
 
-/* Text-only mode (no GUI, print results to stdout) */
-static BOOL g_text_mode = FALSE;
+/* Brief mode (no GUI, print compact benchmark results to CLI output) */
+static BOOL g_brief_mode = FALSE;
+
+/* Full mode (no GUI, export full report to CLI output) */
+static BOOL g_full_mode = FALSE;
+
+/* Dark palette mode */
+static BOOL g_dark_mode = FALSE;
 
 /* Global application context */
 AppContext app_context;
@@ -70,24 +77,39 @@ struct TextAttr Topaz8Font = {
 AppContext *app = &app_context;
 
 /* Command line argument template */
-#define TEMPLATE "DEBUG/S"
+#define TEMPLATE "DEBUG/S,BRIEF/S,FULL/S,DARK/S"
 
 /* Argument array indices */
 enum {
     ARG_DEBUG,
+    ARG_BRIEF,
+    ARG_FULL,
+    ARG_DARK,
     ARG_COUNT
 };
 
 /* Color palette matching original SysInfo */
-static const UWORD palette[8] = {
+static const UWORD default_palette[NUM_COLORS] = {
     0x0AAA,     /* 0: Gray screen background */
-    0x0AAA,     /* 1: Gray panel background */
+    0x0666,     /* 1: Dark title-strip background */
     0x0000,     /* 2: Black text */
     0x0FFF,     /* 3: White highlight */
     0x0068,     /* 4: Blue bar fill */
     0x0F00,     /* 5: Red "You" bar */
     0x0DDD,     /* 6: Light (3D button top) */
     0x0444,     /* 7: Dark (3D button shadow) */
+};
+
+/* Dark palette sampled from the issue reference image */
+static const UWORD dark_palette[NUM_COLORS] = {
+    0x0112,     /* 0: Dark navy background */
+    0x0234,     /* 1: Slate title-strip background */
+    0x0CCC,     /* 2: Soft white text */
+    0x0FFF,     /* 3: White highlight */
+    0x0258,     /* 4: Blue bar fill */
+    0x0E43,     /* 5: Red-orange "You" bar */
+    0x0777,     /* 6: Medium gray (3D button top) */
+    0x0445,     /* 7: Dark slate (3D button shadow) */
 };
 
 /* Default pens array for SA_Pens (use system defaults) */
@@ -104,6 +126,9 @@ static void allocate_pens(void);
 static void release_pens(void);
 static BOOL is_rtg_mode(struct Screen *screen);
 static void parse_tooltypes(void);
+static void run_full_memory_benchmarks(void);
+static void run_full_drive_benchmarks(void);
+static const UWORD *active_palette(void);
 
 /*
  * Case-insensitive string compare (portable, no OS dependency)
@@ -148,8 +173,12 @@ static BOOL parse_args(int argc, char **argv)
         for (int i = 1; i < argc; i++) {
             if (xstricmp(argv[i], "debug") == 0)
                 g_debug_enabled = TRUE;
-            else if (xstricmp(argv[i], "text") == 0)
-                g_text_mode = TRUE;
+            else if (xstricmp(argv[i], "brief") == 0)
+                g_brief_mode = TRUE;
+            else if (xstricmp(argv[i], "full") == 0)
+                g_full_mode = TRUE;
+            else if (xstricmp(argv[i], "dark") == 0)
+                g_dark_mode = TRUE;
         }
     }
     return TRUE;
@@ -194,15 +223,50 @@ static void parse_tooltypes(void)
             g_debug_enabled = TRUE;
         }
 
-        /* Check for TEXT tooltype */
-        if (FindToolType((CONST_STRPTR *)tooltypes, (CONST_STRPTR)"TEXT")) {
-            g_text_mode = TRUE;
+        /* Check for BRIEF tooltype */
+        if (FindToolType((CONST_STRPTR *)tooltypes, (CONST_STRPTR)"BRIEF")) {
+            g_brief_mode = TRUE;
+        }
+
+        /* Check for DARK tooltype */
+        if (FindToolType((CONST_STRPTR *)tooltypes, (CONST_STRPTR)"DARK")) {
+            app->dark_mode = TRUE;
         }
 
         FreeDiskObject(dobj);
     }
 
     CurrentDir(old_dir);
+}
+
+static void run_full_drive_benchmarks(void)
+{
+    ULONG i;
+
+    for (i = 0; i < drive_list.count; i++) {
+        DriveInfo *drive = &drive_list.drives[i];
+
+        if (!drive->is_valid || !drive->handler_name[0] ||
+            drive->disk_state == DISK_NO_DISK ||
+            drive->disk_state == DISK_UNREADABLE) {
+            continue;
+        }
+
+        debug(XSYSINFO_NAME ": Measuring drive %s speed...\n",
+              (LONG)drive->device_name);
+        measure_drive_speed(i);
+    }
+}
+
+static void run_full_memory_benchmarks(void)
+{
+    ULONG i;
+
+    for (i = 0; i < memory_regions.count; i++) {
+        debug(XSYSINFO_NAME ": Measuring memory region %lu speed...\n",
+              (ULONG)(i + 1));
+        measure_memory_speed(i);
+    }
 }
 
 /*
@@ -230,6 +294,7 @@ int main(int argc, char **argv)
     app->bar_scale = SCALE_SHRINK;
     app->running = TRUE;
     app->pressed_button = -1;
+    app->dark_mode = g_dark_mode;
 
     debug(XSYSINFO_NAME ": Initializing locale...\n");
     /* Initialize locale */
@@ -279,7 +344,24 @@ int main(int argc, char **argv)
         goto cleanup;
     }
 
-    if (!g_text_mode) {
+    if (g_full_mode) {
+        BPTR output = Output();
+
+        debug(XSYSINFO_NAME ": Running benchmarks for full CLI output...\n");
+        run_benchmarks();
+
+        debug(XSYSINFO_NAME ": Measuring memory regions for full CLI output...\n");
+        run_full_memory_benchmarks();
+
+        debug(XSYSINFO_NAME ": Measuring drives for full CLI output...\n");
+        run_full_drive_benchmarks();
+
+        debug(XSYSINFO_NAME ": Exporting full report to CLI output...\n");
+        if (!output || !export_to_handle(output)) {
+            Printf((CONST_STRPTR)"Failed to export report\n");
+            ret = RETURN_FAIL;
+        }
+    } else if (!g_brief_mode) {
         debug(XSYSINFO_NAME ": Opening display...\n");
         if (!open_display()) {
             Printf((CONST_STRPTR)"%s\n", (LONG)get_string(MSG_ERR_NO_WINDOW));
@@ -740,8 +822,14 @@ static void close_display(void)
 /*
  * Set color palette for custom screen
  */
+static const UWORD *active_palette(void)
+{
+    return app->dark_mode ? dark_palette : default_palette;
+}
+
 static void set_palette(void)
 {
+    const UWORD *palette = active_palette();
     UWORD i;
 
     if (!app->screen) return;
@@ -756,12 +844,43 @@ static void set_palette(void)
 }
 
 /*
+ * Find the colormap pen closest to a 4-bit RGB triplet.
+ *
+ * GetRGB4() is available since V1, so this works where FindColor() and
+ * ObtainBestPenA() (both V39) are not. Compares in 4-bit space and
+ * allocates nothing.
+ */
+static WORD find_closest_pen(struct ColorMap *cm, WORD ncolors,
+                             LONG r, LONG g, LONG b)
+{
+    WORD best = 1;
+    LONG best_dist = 0x7FFFFFFF;
+    WORD i;
+
+    for (i = 0; i < ncolors; i++) {
+        ULONG rgb = GetRGB4(cm, i);
+        LONG dr = (LONG)((rgb >> 8) & 0xF) - r;
+        LONG dg = (LONG)((rgb >> 4) & 0xF) - g;
+        LONG db = (LONG)(rgb & 0xF) - b;
+        LONG dist = dr * dr + dg * dg + db * db;
+
+        if (dist < best_dist) {
+            best_dist = dist;
+            best = i;
+        }
+    }
+
+    return best;
+}
+
+/*
  * Allocate pens for drawing
  * On custom screen: use direct pen indices 0-7
  * On Workbench: obtain best matching pens from screen's colormap
  */
 static void allocate_pens(void)
 {
+    const UWORD *palette = active_palette();
     UWORD i;
     struct ColorMap *cm;
 
@@ -805,14 +924,18 @@ static void allocate_pens(void)
         }
         app->pens_allocated = TRUE;
     } else {
-        /* OS 2.0 (v37-v38): Use FindColor for best match without allocation */
+        /*
+         * OS 2.0/2.1 (graphics V36-38): FindColor() and ObtainBestPenA()
+         * are V39, so match each color against the screen's palette by
+         * hand with GetRGB4(). No pens are allocated, so pens_allocated
+         * stays FALSE and release_pens() leaves them alone.
+         */
+        WORD ncolors = 1 << app->screen->BitMap.Depth;
         for (i = 0; i < NUM_COLORS; i++) {
-            /* Convert 4-bit RGB to 32-bit RGB for FindColor */
-            ULONG r = ((palette[i] >> 8) & 0xF) * 0x11111111;
-            ULONG g = ((palette[i] >> 4) & 0xF) * 0x11111111;
-            ULONG b = (palette[i] & 0xF) * 0x11111111;
-
-            app->pens[i] = FindColor(cm, r, g, b, -1);
+            app->pens[i] = find_closest_pen(cm, ncolors,
+                                            (palette[i] >> 8) & 0xF,
+                                            (palette[i] >> 4) & 0xF,
+                                            palette[i] & 0xF);
         }
     }
 }

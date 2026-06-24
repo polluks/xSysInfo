@@ -50,6 +50,7 @@ RAMSEY_CTRL EQU $DE0003
 	XDEF	_SetCPUReg
 	XDEF	_GetCPU060;
 	XDEF	_GetVBR
+	XDEF	_GetSSP
 	XDEF	_GetMMU
 	XDEF	_GetCacheBits
 	XDEF	_SetCacheBits
@@ -241,11 +242,24 @@ _readvbr:
 	movec	VBR,d0
 	rte
 
+_GetSSP:
+	movem.l	a5/a6,-(sp)
+	lea.l	_readssp,a5
+	move.l	$4.w,a6
+	jsr	_LVOSupervisor(a6)
+	movem.l	(sp)+,a5/a6
+	rts
+
+_readssp:
+	move.l	a7,d0
+	rte
+
 
 AFB_68020		EQU	1
 
 _GetCacheBits:
 	movem.l	d4/a5/a6,-(sp)
+	moveq	#0,d0
 	move.l	$4.w,a6
 	move.w	AttnFlags(a6),d4
 	btst	#AFB_68020,d4
@@ -265,6 +279,7 @@ AFB_68040		EQU	3
 
 _SetCacheBits:				; d1: flags, d2: mask
 	movem.l	d1-d4/a5/a6,-(sp)
+	moveq	#0,d0
 	move.l	$4.w,a6
 	move.w	AttnFlags(a6),d4
 	btst	#AFB_68020,d4

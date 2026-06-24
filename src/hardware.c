@@ -12,6 +12,7 @@
 #include <graphics/gfxbase.h>
 #include <hardware/cia.h>
 #include <hardware/custom.h>
+#include <libraries/identify.h>
 #include <resources/cia.h>
 #include <mmu/mmubase.h>
 #include <mmu/context.h>
@@ -23,6 +24,7 @@
 #include <proto/dos.h>
 #include <proto/mmu.h>
 #include <proto/expansion.h>
+#include <proto/identify.h>
 
 #include "xsysinfo.h"
 #include "hardware.h"
@@ -49,6 +51,9 @@ BOOL detect_hardware(void)
 
     memset(&hw_info, 0, sizeof(HardwareInfo));
 
+    debug("  hw: Detecting Amiga model...\n");
+    detect_amiga_model();
+
     if (!detect_emu68_systems()) {
         debug("  hw: Detecting CPU...\n");
         detect_cpu();
@@ -60,8 +65,12 @@ BOOL detect_hardware(void)
     detect_fpu();
     debug("  hw: Detecting MMU...\n");
     detect_mmu();
+    debug("  hw: Loading MMU remap table...\n");
+    load_mmu_remap_table();
     debug("  hw: Reading VBR...\n");
     read_vbr();
+    debug("  hw: Reading SSP...\n");
+    read_ssp();
     debug("  hw: Detecting chipset...\n");
     detect_chipset();
     debug("  hw: Detecting system chips...\n");
@@ -105,6 +114,27 @@ BOOL detect_hardware(void)
 
     debug("  hw: Hardware detection complete.\n");
     return TRUE;
+}
+
+void detect_amiga_model(void)
+{
+    STRPTR model = NULL;
+
+    copy_string(hw_info.amiga_model_string, get_string(MSG_NA),
+                sizeof(hw_info.amiga_model_string));
+
+    if (!IdentifyBase) {
+        return;
+    }
+
+    copy_string(hw_info.amiga_model_string, get_string(MSG_UNKNOWN),
+                sizeof(hw_info.amiga_model_string));
+
+    model = IdHardwareTags(IDHW_SYSTEM, TAG_DONE);
+    if (model && model[0]) {
+        copy_string(hw_info.amiga_model_string, (const char *)model,
+                    sizeof(hw_info.amiga_model_string));
+    }
 }
 
 
@@ -262,7 +292,17 @@ BOOL get_super_scalar_mode(void)
     if (hw_info.cpu_type >= CPU_68060 && hw_info.cpu_type <= CPU_68080) {
         ULONG cpuReg = GetCPUReg();
         cpuReg &= 1L; //lowest bit is super scalar bit
-        return cpuReg > 0;
+        if (!cpuReg)
+            return FALSE;
+
+        if (hw_info.cpu_type <= CPU_68LC060) {
+            ULONG cache_bits = GetCacheBits();
+            ULONG cache_mask = CACRF_EBC060 | CACRF_ESB060;
+
+            return (cache_bits & cache_mask) == cache_mask;
+        }
+
+        return TRUE;
     } else {
         return FALSE;
     }
@@ -270,14 +310,12 @@ BOOL get_super_scalar_mode(void)
 
 BOOL set_super_scalar_mode(BOOL value)
 {
-    ULONG cpuReg, cache_bits;
+    ULONG cache_bits;
 
     if (hw_info.cpu_type < CPU_68060 || hw_info.cpu_type > CPU_68080)
         return FALSE;
 
-    cpuReg = value ? 1L : 0L;
-    cpuReg = SetCPUReg(cpuReg);
-    cpuReg &= 1L;
+    SetCPUReg(value ? 1L : 0L);
 
     /* Also toggle enhanced branch cache and store buffer */
     cache_bits = GetCacheBits();
@@ -287,7 +325,7 @@ BOOL set_super_scalar_mode(BOOL value)
         cache_bits &= ~(CACRF_EBC060 | CACRF_ESB060);
     SetCacheBits(cache_bits, cache_bits | CACRF_EBC060 | CACRF_ESB060);
 
-    return cpuReg > 0;
+    return get_super_scalar_mode();
 }
 
 /*
@@ -536,6 +574,72 @@ void detect_mmu(void)
 }
 
 /*
+ * MMU remap table: logical address ranges the MMU redirects to other
+ * physical memory (MAPP_REMAPPED), e.g. mufastzero moving page zero and
+ * ExecBase to fast RAM. Snapshotted once at startup; boot-time
+ * remappings do not change while we run. (issue #44)
+ */
+#define MAX_REMAP_RANGES 16
+static struct {
+    ULONG lower;
+    ULONG higher;
+    LONG  delta;
+} remap_ranges[MAX_REMAP_RANGES];
+static ULONG remap_count = 0;
+
+void load_mmu_remap_table(void)
+{
+    struct MinList *list;
+    struct MappingNode *mn;
+
+    remap_count = 0;
+
+    if (!hw_info.mmu_enabled)
+        return;
+
+    MMUBase = (struct Library *)OpenLibrary((CONST_STRPTR)"mmu.library", 40L);
+    if (!MMUBase)
+        return;
+
+    list = GetMapping(NULL);
+    if (list) {
+        for (mn = (struct MappingNode *)(list->mlh_Head);
+             mn->map_succ && remap_count < MAX_REMAP_RANGES;
+             mn = mn->map_succ) {
+            if (mn->map_Properties & MAPP_REMAPPED) {
+                remap_ranges[remap_count].lower = mn->map_Lower;
+                remap_ranges[remap_count].higher = mn->map_Higher;
+                remap_ranges[remap_count].delta = (LONG)mn->map_un.map_Delta;
+                debug("  hw: MMU remap $%08lx-$%08lx -> $%08lx\n",
+                      (ULONG)mn->map_Lower, (ULONG)mn->map_Higher,
+                      (ULONG)(mn->map_Lower + mn->map_un.map_Delta));
+                remap_count++;
+            }
+        }
+        ReleaseMapping(NULL, list);
+    }
+    CloseLibrary((struct Library *)MMUBase);
+}
+
+/*
+ * Translate a logical address to its physical location. Returns the
+ * input address unchanged when no MMU remapping applies.
+ */
+APTR mmu_physical_address(APTR addr)
+{
+    ULONG address = (ULONG)addr;
+    ULONG i;
+
+    for (i = 0; i < remap_count; i++) {
+        if (address >= remap_ranges[i].lower &&
+            address <= remap_ranges[i].higher) {
+            return (APTR)(address + remap_ranges[i].delta);
+        }
+    }
+    return addr;
+}
+
+/*
  * Read VBR
  */
 void read_vbr(void)
@@ -547,6 +651,11 @@ void read_vbr(void)
     else {
         hw_info.vbr = 0;
     }
+}
+
+void read_ssp(void)
+{
+    hw_info.ssp = GetSSP();
 }
 
 /*
@@ -625,6 +734,8 @@ void detect_chipset(void)
                 tmp = *((volatile UWORD *)(CUSTOM_AGNUS_ID_MIRR));
                 tmp &= 0X7F00; //mask Bit 14-8
                 tmp = (tmp>>8); //shift to lower byte
+                debug("    chipset: OCS Agnus rev=$%02lx mirror=$%02lx\n",
+                      (ULONG)hw_info.agnus_rev, (ULONG)tmp);
                 if (hw_info.agnus_rev == tmp)
                     hw_info.agnus_type = AGNUS_OCS_PAL;
                 else
@@ -636,6 +747,8 @@ void detect_chipset(void)
                 tmp = *((volatile UWORD *)(CUSTOM_AGNUS_ID_MIRR));
                 tmp &= 0X7F00; //mask Bit 14-8
                 tmp = (tmp>>8); //shift to lower byte
+                debug("    chipset: OCS Agnus rev=$%02lx mirror=$%02lx\n",
+                      (ULONG)hw_info.agnus_rev, (ULONG)tmp);
                 if (hw_info.agnus_rev == tmp)
                     hw_info.agnus_type = AGNUS_OCS_NTSC;
                 else
@@ -792,6 +905,26 @@ void detect_batt_mem(void)
 /*
  * Detect Ramsey
  */
+void format_ramsey_rev_string(char *buffer, ULONG size)
+{
+    if (!hw_info.ramsey_rev) {
+        copy_string(buffer, get_string(MSG_NA), size);
+        return;
+    }
+
+    switch (hw_info.ramsey_rev) {
+        case 0x0d:
+            snprintf(buffer, size, "Ramsey 4 (0D)");
+            break;
+        case 0x0f:
+            snprintf(buffer, size, "Ramsey 7 (0F)");
+            break;
+        default:
+            snprintf(buffer, size, "Unknown (%02X)", hw_info.ramsey_rev);
+            break;
+    }
+}
+
 void detect_ramsey(void)
 {
 
@@ -987,6 +1120,18 @@ void detect_gary(void)
         testVal2 = *((volatile UWORD *)(CUSTOM_JOY1DAT_MIRR));
         if (testVal1 == testVal2) {
             hw_info.gary_type = GARY_A1000;
+            /* An A1000 always has a DIP Agnus; the VPOSR mirror test in
+             * detect_chipset() can misread Fat Agnus on accelerated
+             * machines (issue #26). Note this also matches the German
+             * A2000-A, which uses the same DIP chipset. */
+            if (hw_info.agnus_type == AGNUS_OCS_FAT_NTSC) {
+                hw_info.agnus_type = AGNUS_OCS_NTSC;
+                debug("    systemchips: A1000 Gary, correcting Agnus to DIP NTSC\n");
+            }
+            if (hw_info.agnus_type == AGNUS_OCS_FAT_PAL) {
+                hw_info.agnus_type = AGNUS_OCS_PAL;
+                debug("    systemchips: A1000 Gary, correcting Agnus to DIP PAL\n");
+            }
             return;
         }
     }
@@ -1058,12 +1203,15 @@ void detect_system_chips(void)
              "%s", get_string(MSG_NA));
 
     /* Prefer real hardware: if card.resource exists, PCMCIA is present */
+    debug("    systemchips: Checking card.resource...\n");
     if (OpenResource((CONST_STRPTR)"card.resource") != NULL) {
         hw_info.has_pcmcia = TRUE;
         snprintf(hw_info.card_slot_string, sizeof(hw_info.card_slot_string),
                  "%s", get_string(MSG_SLOT_PCMCIA));
+        debug("    systemchips: card.resource found, using PCMCIA\n");
         return;
     }
+    debug("    systemchips: card.resource not found\n");
 
     /* Detect Zorro capability based on chipset presence:
      * - Ramsey (memory controller) indicates A3000/A4000 = Zorro III
@@ -1076,6 +1224,7 @@ void detect_system_chips(void)
         hw_info.has_zorro_slots = TRUE;
         snprintf(hw_info.card_slot_string, sizeof(hw_info.card_slot_string),
                  "%s", get_string(MSG_ZORRO_III));
+        debug("    systemchips: Fat Gary detected, using Zorro III\n");
         return;
     }
 
@@ -1084,13 +1233,25 @@ void detect_system_chips(void)
         hw_info.has_pcmcia = TRUE;
         snprintf(hw_info.card_slot_string, sizeof(hw_info.card_slot_string),
                 "%s", get_string(MSG_SLOT_PCMCIA));
+        debug("    systemchips: Gayle detected, using PCMCIA\n");
         return;
     }
 
     /* A500/A1000/A2000/CDTV*/
     hw_info.has_zorro_slots = TRUE;
-    snprintf(hw_info.card_slot_string, sizeof(hw_info.card_slot_string),
-             "%s", get_string(MSG_ZORRO_II));
+    if (hw_info.gary_type == GARY_A1000) {
+        /* The A1000 86-pin edge connector predates Zorro II; show plain
+         * ZORRO (issue #26). The German A2000-A is mislabelled by this
+         * (same chipset, real Zorro II slots), accepted as a corner case. */
+        snprintf(hw_info.card_slot_string, sizeof(hw_info.card_slot_string),
+                 "%s", get_string(MSG_SLOT_ZORRO));
+        debug("    systemchips: A1000 Gary detected, using Zorro\n");
+    } else {
+        snprintf(hw_info.card_slot_string, sizeof(hw_info.card_slot_string),
+                 "%s", get_string(MSG_ZORRO_II));
+        debug("    systemchips: Gary type %ld, using Zorro II\n",
+              (long)hw_info.gary_type);
+    }
     return;
 }
 
