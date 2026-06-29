@@ -20,16 +20,17 @@ NDK_PATH ?= $(shell realpath $$(dirname $$(which $(CC)))/../m68k-amigaos/ndk-inc
 IDENTIFY_INC = 3rdparty/identify/reference
 MMU_INC = 3rdparty/mmu/reference
 
+#LTO ?= -flto=auto
 CFLAGS = -Os -m68000 -mtune=68020-60 -Wa,-m68881 -msoft-float -noixemul -Wall -Wextra \
          -I$(IDENTIFY_INC) \
          -I$(MMU_INC) \
          -DXSYSINFO_DATE="\"$(ADATE)\"" -DXSYSINFO_VERSION="\"$(FULL_VERSION)\"" \
-         -DPROG_VERSION=$(PROG_VERSION) -DPROG_REVISION=$(PROG_REVISION)
+         -DPROG_VERSION=$(PROG_VERSION) -DPROG_REVISION=$(PROG_REVISION) $(LTO)
 
 ASMFLAGS = -Fhunk -esc -sc -m68020up -I $(NDK_PATH)
 # Select the Kick 1.3-safe libnix runtime.  This keeps the no-ixemul build
 # while avoiding libnix20 helpers that auto-open utility.library.
-LDFLAGS = -mcrt=nix13
+LDFLAGS = -mcrt=nix13 $(LTO)
 LIBS = -lamiga -lgcc
 
 # Source files
@@ -198,6 +199,8 @@ src/dhry_2.o: src/dhry_2.c src/dhry.h
 
 # Disk creation
 DISK = xsysinfo-$(FULL_VERSION).adf
+DISK_TITLE = $(shell printf '%s' "xSysInfo-$(FULL_VERSION)" | \
+	sed 's/-dirty$$//' | cut -c1-30)
 
 # Downloads directory and files
 DOWNLOAD_DIR = downloads
@@ -211,7 +214,7 @@ MU_MANUAL_LHA = $(DOWNLOAD_DIR)/MuManual.lha
 IDENTIFY_USR_MD5 = f8bd9feb9fa595bea979755224d08c5c
 IDENTIFY_PCI_MD5 = 7771426e5c7a5e3dc882a973029099d1
 OPENPCI_MD5 = d13549ab7f294a1d6bdd71de0d5644d0
-MMULIB_MD5 = 0c80b6286f0c46f037c8e8ef15bb1b14
+MMULIB_MD5 = 1e63e42c9d2895d22f896b6d90c26353
 MU_MANUAL_MD5 = 98ce060266ec1ac2dece921f431253b1
 
 .PHONY: identify-all disk download-libs
@@ -375,7 +378,7 @@ TinySetPatch: $(TINYSETPATCH_SRC) $(TINYSETPATCH_DIR)/Makefile Makefile
 
 disk: $(TARGET) download-libs TinySetPatch $(STACK)
 	@echo "  DISK"
-	@xdftool $(DISK) format "xSysInfo"
+	@xdftool $(DISK) format "$(DISK_TITLE)"
 	@xdftool $(DISK) write $(TARGET) $(TARGET)
 	@xdftool $(DISK) write docs/$(TARGET).info $(TARGET).info
 	@xdftool $(DISK) write docs/Disk.info Disk.info

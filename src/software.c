@@ -327,7 +327,7 @@ void enumerate_mmu_entries(void)
     //is mmu.library loaded?
     if (mmuLoaded && hw_info.mmu_enabled) {
         //no else: iff mmu.library is in the libraries lsit, it can load!
-        if ((DOSBase = (struct DosLibrary *)OpenLibrary((CONST_STRPTR)"dos.library", 37L))) {
+        if (DOSBase && DOSBase->dl_lib.lib_Version >= 37) {
             if ((MMUBase = OpenLibrary((CONST_STRPTR)"mmu.library", 40L))) {
 
                 entry = &mmu_list.entries[mmu_list.count];
@@ -475,7 +475,7 @@ void enumerate_mmu_entries(void)
                         }
                     }
                     entry = &mmu_list.entries[mmu_list.count];
-                    snprintf(entry->name, sizeof(entry->name), "%s", buffer);
+                    copy_string(entry->name, buffer, sizeof(entry->name));
                     mmu_list.count++;
                 }
                 if (list) {
@@ -519,7 +519,6 @@ void enumerate_mmu_entries(void)
 
                 CloseLibrary((struct Library *)MMUBase);
             }
-            CloseLibrary((struct Library *)DOSBase);
         }
     } else {
         entry = &mmu_list.entries[0];

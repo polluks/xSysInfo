@@ -35,6 +35,27 @@
 #include "benchmark.h" //for frequencies
 #include "berr_trap.h"
 
+typedef struct DeviceTreeProperty {
+    struct DeviceTreeProperty *next;
+    const char *name;
+    ULONG length;
+    const void *value;
+} DeviceTreeProperty;
+
+typedef struct DeviceTreeNode {
+    struct DeviceTreeNode *next;
+    struct DeviceTreeNode *parent;
+    const char *name;
+    struct DeviceTreeNode *children;
+    DeviceTreeProperty *properties;
+} DeviceTreeNode;
+
+typedef struct DeviceTreeBaseCompat {
+    struct Library node;
+    struct ExecBase *exec_base;
+    DeviceTreeNode *root;
+} DeviceTreeBaseCompat;
+
 /* Global hardware info */
 HardwareInfo hw_info;
 
@@ -137,6 +158,107 @@ void detect_amiga_model(void)
     }
 }
 
+static BOOL dt_name_matches(const char *want, const char *name)
+{
+    if (!want || !name) return FALSE;
+
+    while (*want && *name && *want == *name) {
+        want++;
+        name++;
+    }
+
+    return *want == '\0' && (*name == '\0' || *name == '@');
+}
+
+static DeviceTreeNode *dt_find_child(DeviceTreeNode *parent, const char *name)
+{
+    DeviceTreeNode *node;
+
+    if (!parent) return NULL;
+
+    for (node = parent->children; node; node = node->next) {
+        if (dt_name_matches(name, node->name)) {
+            return node;
+        }
+    }
+
+    return NULL;
+}
+
+static DeviceTreeProperty *dt_find_property(DeviceTreeNode *node,
+                                            const char *name)
+{
+    DeviceTreeProperty *prop;
+
+    if (!node) return NULL;
+
+    for (prop = node->properties; prop; prop = prop->next) {
+        if (prop->name && strcmp(prop->name, name) == 0) {
+            return prop;
+        }
+    }
+
+    return NULL;
+}
+
+static BOOL dt_has_prefix(const char *pos, const char *end,
+                          const char *prefix)
+{
+    while (*prefix) {
+        if (pos >= end || *pos != *prefix) {
+            return FALSE;
+        }
+        pos++;
+        prefix++;
+    }
+
+    return TRUE;
+}
+
+static void set_emu68_cpu_revision(DeviceTreeBaseCompat *dt)
+{
+    DeviceTreeNode *emu68;
+    DeviceTreeProperty *idstring;
+    const char *str, *end, *ver;
+    char revision[sizeof(hw_info.cpu_revision)];
+    ULONG i;
+
+    copy_string(hw_info.cpu_revision, get_string(MSG_NA),
+                sizeof(hw_info.cpu_revision));
+    hw_info.cpu_rev = (UWORD)-1;
+
+    if (!dt || !dt->root) return;
+
+    emu68 = dt_find_child(dt->root, "emu68");
+    idstring = dt_find_property(emu68, "idstring");
+    if (!idstring || !idstring->value || idstring->length == 0) return;
+
+    str = (const char *)idstring->value;
+    end = str + idstring->length;
+
+    for (ver = str; ver < end; ver++) {
+        if (dt_has_prefix(ver, end, "Emu68")) {
+            ver += 5;
+            while (ver < end && *ver == ' ') ver++;
+            break;
+        }
+    }
+
+    if (ver >= end || *ver == '\0') return;
+
+    i = 0;
+    while (ver < end && *ver && *ver != ' ' && *ver != '(' &&
+           i < sizeof(revision) - 1) {
+        revision[i++] = *ver++;
+    }
+    revision[i] = '\0';
+
+    if (revision[0]) {
+        copy_string(hw_info.cpu_revision, revision,
+                    sizeof(hw_info.cpu_revision));
+    }
+}
+
 
 /*
     Detects emu68 CPUs
@@ -145,13 +267,16 @@ void detect_amiga_model(void)
 BOOL detect_emu68_systems(void)
 {
     BOOL retVal = FALSE;
+    DeviceTreeBaseCompat *dt;
 
     debug("  emu68: Scanning for EMU68 devicetree.resource...\n");
-    if (OpenResource((CONST_STRPTR)"devicetree.resource") != NULL)
+    dt = (DeviceTreeBaseCompat *)OpenResource((CONST_STRPTR)"devicetree.resource");
+    if (dt != NULL)
     {
         debug("  emu68: devicetree.resource found!\n");
         snprintf(hw_info.cpu_string, sizeof(hw_info.cpu_string), "Emu68");
         hw_info.cpu_type = CPU_EMU;
+        set_emu68_cpu_revision(dt);
         retVal = TRUE;
     } else {
         debug("  emu68: NO devicetree.resource found! Assuming real CPU.\n");
@@ -167,29 +292,29 @@ BOOL detect_emu68_systems(void)
 void detect_cpu(void)
 {
     /*
-    First check for emulated CPUs
-    */
+     * First check for emulated CPUs
+     */
     if (hw_info.cpu_type == CPU_EMU) {
         return;
     }
 
     /*
-    now determine kickstart:
-    Kick <=1.3 does only know 68000-68020
-    Kick <=3.1 does not know >=68060
-    */
+     * now determine kickstart:
+     *  Kick <=1.3 does only know 68000-68020
+     *  Kick <=3.1 does not know >=68060
+     */
    UWORD attnFlags = SysBase->AttnFlags;
-    if ((attnFlags & (UWORD)AFF_68010) == 0) { //not even a 68010?
+    if ((attnFlags & (UWORD)AFF_68010) == 0) { // not even a 68010?
         snprintf(hw_info.cpu_string, sizeof(hw_info.cpu_string), "68000");
         hw_info.cpu_type = CPU_68000;
     }
 
-    else if ((attnFlags & (UWORD)AFF_68020) == 0) { //not a 68020?
+    else if ((attnFlags & (UWORD)AFF_68020) == 0) { // not a 68020?
         snprintf(hw_info.cpu_string, sizeof(hw_info.cpu_string), "68010");
         hw_info.cpu_type = CPU_68010;
     }
 
-    else {// we detect now 68030 and 68040 manually , because Kick 1.3 does not know about a 68030+
+    else { // we now detect 68030 and 68040 manually, because Kick 1.3 does not know about a 68030+
         ULONG oldBits, newBits;
 
         // now we have at least a 68020/030
@@ -415,9 +540,15 @@ void detect_mmu(void)
             switch (GetMMUType())
             {
             case MUTYPE_68851:
-                hw_info.mmu_type = MMU_68851;
-                copy_string(hw_info.mmu_string, "68851",
-                            sizeof(hw_info.mmu_string));
+                if (hw_info.cpu_type == CPU_68030) {
+                    hw_info.mmu_type = MMU_68030;
+                    copy_string(hw_info.mmu_string, "68030",
+                                sizeof(hw_info.mmu_string));
+                } else {
+                    hw_info.mmu_type = MMU_68851;
+                    copy_string(hw_info.mmu_string, "68851",
+                                sizeof(hw_info.mmu_string));
+                }
                 hw_info.mmu_enabled = TRUE;
                 break;
             case MUTYPE_68030:

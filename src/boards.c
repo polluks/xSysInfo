@@ -32,6 +32,7 @@
 
 #define OPENPCI_MANUFACTURER_FIRST 1729
 #define OPENPCI_MANUFACTURER_LAST  1735
+#define MIN_IDENTIFY_PCI_VERSION   45
 
 /*
  * Minimal OpenPCI pci_dev prefix used by identify.library when traversing
@@ -180,8 +181,8 @@ static BOOL append_pci_board(struct pci_dev *pci, const char *manufacturer,
     snprintf(board->address_string, sizeof(board->address_string), "--");
     snprintf(board->size_string, sizeof(board->size_string), "--");
     if (class_name && class_name[0]) {
-        snprintf(board->detail_string, sizeof(board->detail_string), "%s",
-                 class_name);
+        copy_string(board->detail_string, class_name,
+                    sizeof(board->detail_string));
     } else {
         snprintf(board->detail_string, sizeof(board->detail_string), "PCI");
     }
@@ -216,6 +217,12 @@ static void enumerate_pci_boards_with_identify(void)
     char manufacturer[64];
     char product[64];
     char class_name[64];
+
+    if (!IdentifyBase || IdentifyBase->lib_Version < MIN_IDENTIFY_PCI_VERSION) {
+        debug("  boards: Skipping PCI scan, identify.library v%u lacks "
+              "IdPciExpansion\n", IdentifyBase ? IdentifyBase->lib_Version : 0);
+        return;
+    }
 
     debug("  boards: Scanning PCI boards via identify.library...\n");
 

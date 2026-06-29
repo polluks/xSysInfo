@@ -20,6 +20,9 @@
 #ifndef NSCMD_TD_READ64
 #define NSCMD_TD_READ64 0xC000
 #endif
+#ifndef TD_READ64
+#define TD_READ64 (CMD_NONSTD + 15)
+#endif
 
 #include <proto/exec.h>
 #include <proto/dos.h>
@@ -48,6 +51,11 @@ DriveList drive_list;
 #define DRIVE_SPEED_TARGET_US   1000000UL
 #define DRIVE_SPEED_MAX_US      2000000UL
 #define DRIVE_SPEED_MAX_BYTES   (32UL * 1024UL * 1024UL)
+
+#define DRIVE_INFO_X        120
+#define DRIVE_VALUE_OFFSET  224
+#define DRIVE_VALUE_X       (DRIVE_INFO_X + DRIVE_VALUE_OFFSET)
+#define DRIVE_VALUE_MAX_X   618
 
 static ULONG drive_page = 0;
 
@@ -282,6 +290,31 @@ static ULONG get_geometry_total_blocks(const DriveInfo *drive)
     return drive->total_blocks;
 }
 
+static BPTR lock_drive_for_info(const DriveInfo *drive, BOOL silent)
+{
+    struct Process *proc = NULL;
+    APTR old_window = NULL;
+    BPTR lock;
+
+    if (!drive) return 0;
+
+    if (silent) {
+        proc = (struct Process *)FindTask(NULL);
+        if (proc) {
+            old_window = proc->pr_WindowPtr;
+            proc->pr_WindowPtr = (APTR)-1;
+        }
+    }
+
+    lock = Lock((CONST_STRPTR)drive->device_name, ACCESS_READ);
+
+    if (silent && proc) {
+        proc->pr_WindowPtr = old_window;
+    }
+
+    return lock;
+}
+
 /*
  * Convert BSTR to C string
  */
@@ -299,8 +332,26 @@ static void bstr_to_cstr(BSTR bstr, char *cstr, ULONG maxlen)
     cstr[len] = '\0';
 }
 
+static void bstr_to_device_name(BSTR bstr, char *name, ULONG maxlen)
+{
+    size_t len;
+
+    if (!name || maxlen == 0) return;
+    if (maxlen == 1) {
+        name[0] = '\0';
+        return;
+    }
+
+    name[0] = '\0';
+    bstr_to_cstr(bstr, name, maxlen - 1);
+    len = strlen(name);
+    name[len++] = ':';
+    name[len] = '\0';
+}
+
 /* Helpers */
 static BOOL is_floppy_device(ULONG total_blocks);
+static BOOL drive_has_media_evidence(const DriveInfo *drive);
 
 #define MIN_KICK_DEVICE_VERSION 36
 
@@ -364,7 +415,6 @@ static struct DosList *MyNextDosEntry(struct DosList *list, ULONG flags)
 static void scan_dos_list(void)
 {
     struct DosList *dol;
-    char buffer[32];
 
     debug("  drives: Locking DosList...\n");
     dol = MyLockDosList(LDF_DEVICES | LDF_READ);
@@ -375,14 +425,12 @@ static void scan_dos_list(void)
             debug("  drives: MAX_DRIVES reached, skipping remaining devices\n");
             break;
         }
-        buffer[0] = '\0';
         DriveInfo *drive = &drive_list.drives[drive_list.count];
         drive->is_valid = FALSE;
 
         /* Get device name */
-        bstr_to_cstr(dol->dol_Name, buffer, sizeof(buffer) - 2);
-        snprintf(drive->device_name, sizeof(drive->device_name), "%s:",
-                     buffer);
+        bstr_to_device_name(dol->dol_Name, drive->device_name,
+                            sizeof(drive->device_name));
 
         debug("  drives: Found device '%s' task=$%08lx startup=$%08lx\n",
               (LONG)drive->device_name, (ULONG)dol->dol_Task,
@@ -503,11 +551,9 @@ static void match_volumes_to_drives(void)
     memset(dev_tasks, 0, sizeof(dev_tasks));
     dev_dol = MyLockDosList(LDF_DEVICES | LDF_READ);
     while ((dev_dol = MyNextDosEntry(dev_dol, LDF_DEVICES)) != NULL) {
-        char buffer[32];
         char dev_name[34];
-        bstr_to_cstr(dev_dol->dol_Name, buffer, sizeof(buffer) - 2);
-        snprintf(dev_name, sizeof(dev_name), "%s:",
-                     buffer);
+        bstr_to_device_name(dev_dol->dol_Name, dev_name,
+                            sizeof(dev_name));
 
         /* Find matching drive in our list */
         for (i = 0; i < drive_list.count; i++) {
@@ -564,15 +610,23 @@ static void query_drive_details(void)
         BPTR lock;
 
         /* Avoid hanging on empty floppies; require a volume to be present */
-        if (!has_volume && is_floppy) continue;
+        if (!has_volume && is_floppy) {
+            drive->disk_state = DISK_NO_DISK;
+            continue;
+        }
         /* Skip clearly invalid entries */
-        if (!drive->is_valid && !has_volume) continue;
+        if (!drive->is_valid && !has_volume) {
+            drive->disk_state = DISK_NO_DISK;
+            continue;
+        }
 
-        debug("  drives: Trying Info() on '%s'\n", (LONG)drive->device_name);
-        lock = Lock((CONST_STRPTR)drive->device_name, ACCESS_READ);
+        debug("  drives: Trying Info() on '%s'%s\n",
+              (LONG)drive->device_name,
+              (LONG)(has_volume ? "" : " with requesters suppressed"));
+        lock = lock_drive_for_info(drive, !has_volume);
         if (!lock) {
             debug("  drives: Lock failed on '%s'\n", (LONG)drive->device_name);
-            if (drive->disk_state == DISK_OK) {
+            if (!has_volume || drive->disk_state == DISK_OK) {
                 drive->disk_state = DISK_NO_DISK;
             }
             continue;
@@ -782,6 +836,19 @@ static BOOL is_floppy_device(ULONG total_blocks)
     return (total_blocks > 0 && total_blocks <= 7040);
 }
 
+static BOOL drive_has_media_evidence(const DriveInfo *drive)
+{
+    if (!drive || drive->disk_state == DISK_NO_DISK) {
+        return FALSE;
+    }
+
+    if (is_floppy_device(get_geometry_total_blocks(drive))) {
+        return TRUE;
+    }
+
+    return drive->volume_name[0] != '\0' || drive->has_info;
+}
+
 /*
  * Check if a disk is present in the drive using TD_CHANGESTATE.
  * Returns TRUE if a disk is present, FALSE otherwise.
@@ -805,10 +872,16 @@ BOOL check_disk_present(ULONG index)
         return FALSE;
     }
 
-    /* Only check floppy-type devices */
+    /* Only floppy-type devices have a cheap TD_CHANGESTATE probe here. */
     if (!is_floppy_device(get_geometry_total_blocks(drive))) {
-        /* Non-floppy devices are assumed to have media present */
-        return TRUE;
+        if (drive_has_media_evidence(drive)) {
+            return TRUE;
+        }
+
+        drive->disk_state = DISK_NO_DISK;
+        debug("  drives: %s has no volume or Info(), treating as no media\n",
+              (LONG)drive->device_name);
+        return FALSE;
     }
 
     /* Create message port */
@@ -843,7 +916,11 @@ BOOL check_disk_present(ULONG index)
     }
 
     /* Update drive state based on result */
-    if (!disk_present) {
+    if (disk_present) {
+        if (drive->disk_state == DISK_NO_DISK) {
+            drive->disk_state = DISK_UNKNOWN;
+        }
+    } else {
         drive->disk_state = DISK_NO_DISK;
         drive->volume_name[0] = '\0';
     }
@@ -1098,6 +1175,14 @@ ULONG measure_drive_speed(ULONG index)
         return 0;
     }
 
+    if (!drive_has_media_evidence(drive)) {
+        debug("  drives: No media evidence for speed test on %s\n",
+              (LONG)drive->device_name);
+        drive->speed_measured = FALSE;
+        drive->speed_bytes_sec = 0;
+        return 0;
+    }
+
     /* Determine block size and buffer size based on device type */
     block_size = drive->bytes_per_block ? drive->bytes_per_block : 512;
     is_floppy = is_floppy_device(get_geometry_total_blocks(drive));
@@ -1135,14 +1220,14 @@ ULONG measure_drive_speed(ULONG index)
     }
 
     /* Create message port */
-    port = CreateMsgPort();
+    port = (struct MsgPort *)CreatePort(NULL, 0);
     if (!port) {
         debug("  drives: Failed to create message port\n");
         goto cleanup;
     }
 
     /* Create I/O request */
-    io = (struct IOStdReq *)CreateIORequest(port, sizeof(struct IOStdReq));
+    io = (struct IOStdReq *)CreateExtIO(port, sizeof(struct IOStdReq));
     if (!io) {
         debug("  drives: Failed to create IO request\n");
         goto cleanup;
@@ -1359,8 +1444,8 @@ cleanup:
         CloseDevice((struct IORequest *)io);
         WaitTOF();
     }
-    if (io) DeleteIORequest((struct IORequest *)io);
-    if (port) DeleteMsgPort(port);
+    if (io) DeleteExtIO((struct IORequest *)io);
+    if (port) DeletePort(port);
 
     if (!device_opened) {
         /* If we failed to open or allocate, ensure marked as failed */
@@ -1374,32 +1459,221 @@ cleanup:
 /*
  * Draw drives data area (buttons, info panel, action buttons - no title)
  */
+static void format_drive_speed(const DriveInfo *drive, char *buffer,
+                               size_t size)
+{
+    if (drive->speed_measured) {
+        ULONG speed = drive->speed_bytes_sec;
+        if (speed >= 1000000) {
+            snprintf(buffer, size, "%lu.%lu MB/s",
+                     (unsigned long)(speed / 1000000),
+                     (unsigned long)((speed % 1000000) / 100000));
+        } else if (speed >= 10000) {
+            snprintf(buffer, size, "%lu KB/s",
+                     (unsigned long)(speed / 1000));
+        } else {
+            snprintf(buffer, size, "%lu B/s", (unsigned long)speed);
+        }
+    } else {
+        snprintf(buffer, size, "%s", get_string(MSG_DASH_PLACEHOLDER));
+    }
+}
+
+static void draw_drive_value(WORD y, const char *value);
+
+static void draw_drive_speed_row(void)
+{
+    DriveInfo *drive;
+    char buffer[64];
+
+    if (app->selected_drive < 0 ||
+        app->selected_drive >= (LONG)drive_list.count) {
+        return;
+    }
+
+    drive = &drive_list.drives[app->selected_drive];
+    format_drive_speed(drive, buffer, sizeof(buffer));
+
+    draw_drive_value(175, buffer);
+}
+
+static void draw_drive_value(WORD y, const char *value)
+{
+    struct RastPort *rp = app->rp;
+
+    SetAPen(rp, COLOR_PANEL_BG);
+    RectFill(rp, DRIVE_VALUE_X, y - 8, DRIVE_VALUE_MAX_X, y + 2);
+    SetAPen(rp, COLOR_HIGHLIGHT);
+    SetBPen(rp, COLOR_PANEL_BG);
+    draw_text_clipped(DRIVE_VALUE_X, y, value,
+                      DRIVE_VALUE_MAX_X - DRIVE_VALUE_X);
+}
+
+static void draw_drive_values(void)
+{
+    DriveInfo *drive;
+    char buffer[64];
+    const char *value;
+    WORD y = 40;
+
+    if (app->selected_drive < 0 ||
+        app->selected_drive >= (LONG)drive_list.count) {
+        return;
+    }
+
+    drive = &drive_list.drives[app->selected_drive];
+
+    snprintf(buffer, sizeof(buffer), "%lu",
+             (unsigned long)drive->disk_errors);
+    draw_drive_value(y, buffer);
+    y += 9;
+
+    snprintf(buffer, sizeof(buffer), "%lu",
+             (unsigned long)drive->unit_number);
+    draw_drive_value(y, buffer);
+    y += 9;
+
+    if (drive->disk_state == DISK_NO_DISK) {
+        value = get_string(MSG_DASH_PLACEHOLDER);
+    } else {
+        value = get_disk_state_string(drive->disk_state);
+    }
+    draw_drive_value(y, value);
+    y += 9;
+
+    snprintf(buffer, sizeof(buffer), "%lu",
+             (unsigned long)drive->total_blocks);
+    draw_drive_value(y, buffer);
+    y += 9;
+
+    if (drive->disk_state == DISK_NO_DISK) {
+        value = get_string(MSG_DASH_PLACEHOLDER);
+    } else {
+        snprintf(buffer, sizeof(buffer), "%lu",
+                 (unsigned long)drive->blocks_used);
+        value = buffer;
+    }
+    draw_drive_value(y, value);
+    y += 9;
+
+    if (drive->disk_state == DISK_NO_DISK) {
+        value = get_string(MSG_DASH_PLACEHOLDER);
+    } else {
+        format_block_size_display(drive, buffer, sizeof(buffer));
+        value = buffer;
+    }
+    draw_drive_value(y, value);
+    y += 9;
+
+    if (drive->disk_state == DISK_NO_DISK) {
+        value = get_string(MSG_DISK_NO_DISK_INSERTED);
+    } else {
+        format_filesystem_display(drive, buffer, sizeof(buffer));
+        value = buffer;
+    }
+    draw_drive_value(y, value);
+    y += 9;
+
+    if (drive->disk_state == DISK_NO_DISK || !drive->volume_name[0]) {
+        value = get_string(MSG_DASH_PLACEHOLDER);
+    } else {
+        value = drive->volume_name;
+    }
+    draw_drive_value(y, value);
+    y += 9;
+
+    if (drive->handler_name[0]) {
+        value = drive->handler_name;
+    } else {
+        value = get_string(MSG_DASH_PLACEHOLDER);
+    }
+    draw_drive_value(y, value);
+    y += 9;
+
+    snprintf(buffer, sizeof(buffer), "%lu",
+             (unsigned long)drive->surfaces);
+    draw_drive_value(y, buffer);
+    y += 9;
+
+    snprintf(buffer, sizeof(buffer), "%lu",
+             (unsigned long)drive->sectors_per_track);
+    draw_drive_value(y, buffer);
+    y += 9;
+
+    snprintf(buffer, sizeof(buffer), "%lu",
+             (unsigned long)drive->reserved_blocks);
+    draw_drive_value(y, buffer);
+    y += 9;
+
+    snprintf(buffer, sizeof(buffer), "%lu",
+             (unsigned long)drive->low_cylinder);
+    draw_drive_value(y, buffer);
+    y += 9;
+
+    snprintf(buffer, sizeof(buffer), "%lu",
+             (unsigned long)drive->high_cylinder);
+    draw_drive_value(y, buffer);
+    y += 9;
+
+    snprintf(buffer, sizeof(buffer), "%lu",
+             (unsigned long)drive->num_buffers);
+    draw_drive_value(y, buffer);
+    y += 9;
+
+    format_drive_speed(drive, buffer, sizeof(buffer));
+    draw_drive_value(y, buffer);
+}
+
+static void draw_drive_select_buttons(void)
+{
+    int i;
+
+    for (i = 0; i < num_buttons; i++) {
+        if (buttons[i].id >= BTN_DRV_DRIVE_BASE &&
+            buttons[i].id < BTN_DRV_DRIVE_BASE + MAX_DRIVES) {
+            buttons[i].pressed = (app->selected_drive ==
+                                  (LONG)(buttons[i].id -
+                                         BTN_DRV_DRIVE_BASE));
+            draw_button(&buttons[i]);
+        }
+    }
+}
+
+static void draw_drive_action_buttons(void)
+{
+    Button *btn;
+
+    btn = find_button(BTN_DRV_EXIT);
+    if (btn) draw_button(btn);
+    btn = find_button(BTN_DRV_SCSI);
+    if (btn) draw_button(btn);
+    btn = find_button(BTN_DRV_SPEED);
+    if (btn) draw_button(btn);
+
+    /* Draw pager buttons (only added when the list spans pages) */
+    btn = find_button(BTN_DRV_PAGE_PREV);
+    if (btn) draw_button(btn);
+    btn = find_button(BTN_DRV_PAGE_NEXT);
+    if (btn) draw_button(btn);
+}
+
 static void draw_drives_data(BOOL full_redraw)
 {
     struct RastPort *rp = app->rp;
     WORD y;
     DriveInfo *drive;
     char buffer[64];
-    Button *btn;
-    int i;
 
     /* Draw drive selection buttons on left */
-    for (i = 0; i < num_buttons; i++) {
-        if (buttons[i].id >= BTN_DRV_DRIVE_BASE &&
-            buttons[i].id < BTN_DRV_DRIVE_BASE + MAX_DRIVES) {
-            buttons[i].pressed = (app->selected_drive ==
-                                  (LONG)(buttons[i].id - BTN_DRV_DRIVE_BASE));
-            draw_button(&buttons[i]);
-        }
-    }
+    draw_drive_select_buttons();
 
     if (full_redraw) {
         /* Draw drive info panel with 3D border */
         draw_panel(100, 28, 520, 152, NULL);
     } else {
-        /* Clear panel interior only (preserve 3D border) */
-        SetAPen(rp, COLOR_PANEL_BG);
-        RectFill(rp, 101, 29, 618, 178);
+        draw_drive_values();
+        draw_drive_action_buttons();
+        return;
     }
 
     if (app->selected_drive < 0 || app->selected_drive >= (LONG)drive_list.count) {
@@ -1502,41 +1776,12 @@ static void draw_drives_data(BOOL full_redraw)
         draw_label_value(120, y, get_string(MSG_NUM_BUFFERS), buffer, 224);
         y += 9;
 
-        /* Speed - display in appropriate units */
-        if (drive->speed_measured) {
-            ULONG speed = drive->speed_bytes_sec;
-            if (speed >= 1000000) {
-                /* MB/s for very fast drives */
-                snprintf(buffer, sizeof(buffer), "%lu.%lu MB/s",
-                         (unsigned long)(speed / 1000000),
-                         (unsigned long)((speed % 1000000) / 100000));
-            } else if (speed >= 10000) {
-                /* KB/s for typical drives */
-                snprintf(buffer, sizeof(buffer), "%lu KB/s",
-                         (unsigned long)(speed / 1000));
-            } else {
-                /* Bytes/s for very slow devices */
-                snprintf(buffer, sizeof(buffer), "%lu B/s", (unsigned long)speed);
-            }
-        } else {
-            snprintf(buffer, sizeof(buffer), "%s", get_string(MSG_DASH_PLACEHOLDER));
-        }
+        format_drive_speed(drive, buffer, sizeof(buffer));
         draw_label_value(120, y, get_string(MSG_SPEED), buffer, 224);
     }
 
     /* Draw bottom buttons */
-    btn = find_button(BTN_DRV_EXIT);
-    if (btn) draw_button(btn);
-    btn = find_button(BTN_DRV_SCSI);
-    if (btn) draw_button(btn);
-    btn = find_button(BTN_DRV_SPEED);
-    if (btn) draw_button(btn);
-
-    /* Draw pager buttons (only added when the list spans pages) */
-    btn = find_button(BTN_DRV_PAGE_PREV);
-    if (btn) draw_button(btn);
-    btn = find_button(BTN_DRV_PAGE_NEXT);
-    if (btn) draw_button(btn);
+    draw_drive_action_buttons();
 }
 
 /*
@@ -1593,8 +1838,8 @@ void drives_view_update_buttons(void)
         scsi_enabled = drive->scsi_supported;
         /* Speed needs a disk and an exec device to read from; volume-only
          * entries (RAM:, mounts without a parseable FSSM) have neither */
-        speed_enabled = (drive->disk_state != DISK_NO_DISK &&
-                         drive->handler_name[0] != '\0');
+        speed_enabled = (drive->handler_name[0] != '\0' &&
+                         drive_has_media_evidence(drive));
     }
 
     /* Action buttons */
@@ -1644,6 +1889,7 @@ void drives_view_handle_button(ButtonID id)
                 show_status_overlay(get_string(MSG_MEASURING_SPEED));
                 measure_drive_speed(app->selected_drive);
                 hide_status_overlay();
+                draw_drive_speed_row();
             }
             break;
 
