@@ -36,7 +36,9 @@
 #include "boards.h"
 #include "drives.h"
 #include "benchmark.h"
+#include "busclock.h"
 #include "print.h"
+#include "which.h"
 #include "locale_str.h"
 #include "debug.h"
 
@@ -64,6 +66,9 @@ static BOOL g_brief_mode = FALSE;
 /* Full mode (no GUI, export full report to CLI output) */
 static BOOL g_full_mode = FALSE;
 
+/* WhichAmiga 1.3.3 compatible CLI report */
+static BOOL g_which_mode = FALSE;
+
 /* Dark palette mode */
 static BOOL g_dark_mode = FALSE;
 
@@ -78,13 +83,14 @@ struct TextAttr Topaz8Font = {
 AppContext *app = &app_context;
 
 /* Command line argument template */
-#define TEMPLATE "DEBUG/S,BRIEF/S,FULL/S,DARK/S"
+#define TEMPLATE "DEBUG/S,BRIEF/S,FULL/S,WHICH/S,DARK/S"
 
 /* Argument array indices */
 enum {
     ARG_DEBUG,
     ARG_BRIEF,
     ARG_FULL,
+    ARG_WHICH,
     ARG_DARK,
     ARG_COUNT
 };
@@ -140,6 +146,18 @@ static void parse_tooltypes(void);
 static void run_full_memory_benchmarks(void);
 static void run_full_drive_benchmarks(void);
 static const UWORD *active_palette(void);
+
+/* Finish buffered diagnostics before text reports use raw Write(). */
+static void flush_report_output(BPTR output)
+{
+    fflush(stdout);
+#ifndef __KICK13__
+    if (output && DOSBase->dl_lib.lib_Version >= 36)
+        Flush(output);
+#else
+    (void)output;
+#endif
+}
 
 static UBYTE *find_icon_tooltype(STRPTR *tooltypes, IconString name)
 {
@@ -198,6 +216,8 @@ static BOOL parse_args(int argc, char **argv)
                 g_brief_mode = TRUE;
             else if (xstricmp(argv[i], "full") == 0)
                 g_full_mode = TRUE;
+            else if (xstricmp(argv[i], "which") == 0)
+                g_which_mode = TRUE;
             else if (xstricmp(argv[i], "dark") == 0)
                 g_dark_mode = TRUE;
         }
@@ -242,11 +262,6 @@ static void parse_tooltypes(void)
         /* Check for DEBUG tooltype */
         if (find_icon_tooltype(tooltypes, ICON_STR("DEBUG"))) {
             g_debug_enabled = TRUE;
-        }
-
-        /* Check for BRIEF tooltype */
-        if (find_icon_tooltype(tooltypes, ICON_STR("BRIEF"))) {
-            g_brief_mode = TRUE;
         }
 
         /* Check for DARK tooltype */
@@ -311,8 +326,8 @@ int main(int argc, char **argv)
     /* Initialize application context */
     memset(app, 0, sizeof(AppContext));
     app->current_view = VIEW_MAIN;
-    app->software_type = SOFTWARE_LIBRARIES;
-    app->bar_scale = SCALE_SHRINK;
+    app->software_type = SOFTWARE_OVERVIEW;
+    app->bar_scale = SCALE_EXPAND;
     app->running = TRUE;
     app->pressed_button = -1;
     app->dark_mode = g_dark_mode;
@@ -365,6 +380,8 @@ int main(int argc, char **argv)
         goto cleanup;
     }
 
+    measure_bus_frequency();
+
     if (g_full_mode) {
         BPTR output = Output();
 
@@ -378,8 +395,19 @@ int main(int argc, char **argv)
         run_full_drive_benchmarks();
 
         debug(XSYSINFO_NAME ": Exporting full report to CLI output...\n");
+        flush_report_output(output);
         if (!output || !export_to_handle(output)) {
             Printf((CONST_STRPTR)"Failed to export report\n");
+            ret = RETURN_FAIL;
+        }
+    } else if (g_which_mode) {
+        BPTR output = Output();
+
+        measure_processor_frequencies();
+        debug(XSYSINFO_NAME ": Exporting WhichAmiga-compatible report...\n");
+        flush_report_output(output);
+        if (!output || !export_which_compatible(output)) {
+            Printf((CONST_STRPTR)"Failed to export WhichAmiga report\n");
             ret = RETURN_FAIL;
         }
     } else if (!g_brief_mode) {
@@ -409,6 +437,14 @@ int main(int argc, char **argv)
             printf("%s\n", buffer);
         } else {
             printf("%s\n", get_string(MSG_NA));
+        }
+
+        if (hw_info.ramsey_rev) {
+            if (hw_info.bus_mhz)
+                format_scaled(buffer, sizeof(buffer), hw_info.bus_mhz, TRUE);
+            else
+                copy_string(buffer, get_string(MSG_NA), sizeof(buffer));
+            printf("Motherboard bus MHz: %s\n", buffer);
         }
 
         printf("MMU: %s enabled: %s\n", hw_info.mmu_string,
@@ -1034,7 +1070,7 @@ static void main_loop(void)
                         ButtonID btn = handle_click(mx, my);
                         if (btn != BTN_NONE) {
                             if (btn == BTN_SOFTWARE_SCROLLBAR) {
-                                app->scrollbar_dragging = TRUE;
+                                app->scrollbar_dragging = FALSE;
                                 handle_scrollbar_click(mx, my);
                             } else {
                                 /* Set button as pressed and redraw */

@@ -58,6 +58,17 @@ struct SCSICapacityData {
     ULONG block_size;           /* Block size in bytes */
 };
 
+/* Standard INQUIRY data length requested in the CDB allocation length */
+#define INQUIRY_DATA_LENGTH sizeof(struct SCSIInquiryData)
+
+/* Some drivers (lide.device < 40.11, Emu68 nvme.device) append optional
+ * INQUIRY fields such as the drive serial number without checking the
+ * requested allocation length. Receive INQUIRY data into a buffer padded
+ * to the largest possible transfer (allocation length is one byte) so
+ * such overruns land in memory we own instead of corrupting the stack.
+ * Declared as UWORD array to guarantee word alignment for scsi_Data. */
+#define INQUIRY_BUF_WORDS (256 / 2)
+
 /*
  * Calculate unit number for wide SCSI controllers
  * Phase V wide SCSI scheme for IDs/LUNs > 7
@@ -153,7 +164,7 @@ BOOL check_scsi_direct_support(const char *handler_name, ULONG unit_number)
     BOOL supports_scsi = FALSE;
     struct SCSICmd scsi_cmd;
     UBYTE cmd[6];
-    UBYTE inquiry_buf[36];
+    UWORD inquiry_buf[INQUIRY_BUF_WORDS];
     UBYTE sense_data[20];
 
     BYTE error;
@@ -192,12 +203,12 @@ BOOL check_scsi_direct_support(const char *handler_name, ULONG unit_number)
     /* INQUIRY — always responds regardless of media state, avoiding
      * hangs on empty removable drives (e.g. CD-ROM without a disc). */
     cmd[0] = 0x12;                  /* INQUIRY opcode */
-    cmd[4] = sizeof(inquiry_buf);   /* Allocation length */
+    cmd[4] = INQUIRY_DATA_LENGTH;   /* Allocation length */
 
     scsi_cmd.scsi_Command = cmd;
     scsi_cmd.scsi_CmdLength = sizeof(cmd);
-    scsi_cmd.scsi_Data = (UWORD *)inquiry_buf;
-    scsi_cmd.scsi_Length = sizeof(inquiry_buf);
+    scsi_cmd.scsi_Data = inquiry_buf;
+    scsi_cmd.scsi_Length = INQUIRY_DATA_LENGTH;
     scsi_cmd.scsi_Flags = SCSIF_READ | SCSIF_AUTOSENSE;
     scsi_cmd.scsi_SenseData = sense_data;
     scsi_cmd.scsi_SenseLength = sizeof(sense_data);
@@ -243,12 +254,14 @@ static BOOL scsi_inquiry(int target, int lun,
     struct SCSICmd scsi_cmd;
     UBYTE cmd[6];
     UBYTE sense_data[20];
+    UWORD inquiry_buf[INQUIRY_BUF_WORDS];
     BYTE error;
     ULONG unit;
 
     memset(&scsi_cmd, 0, sizeof(scsi_cmd));
     memset(cmd, 0, sizeof(cmd));
     memset(sense_data, 0, sizeof(sense_data));
+    memset(inquiry_buf, 0, sizeof(inquiry_buf));
     memset(inquiry_data, 0, sizeof(struct SCSIInquiryData));
 
 
@@ -280,11 +293,11 @@ static BOOL scsi_inquiry(int target, int lun,
     cmd[1] = (lun << 5);        /* LUN in command for older devices */
     cmd[2] = 0;                 /* Page code */
     cmd[3] = 0;                 /* Reserved */
-    cmd[4] = sizeof(struct SCSIInquiryData);  /* Allocation length */
+    cmd[4] = INQUIRY_DATA_LENGTH;  /* Allocation length */
     cmd[5] = 0;                 /* Control */
 
-    scsi_cmd.scsi_Data = (UWORD *)inquiry_data;
-    scsi_cmd.scsi_Length = sizeof(struct SCSIInquiryData);
+    scsi_cmd.scsi_Data = inquiry_buf;
+    scsi_cmd.scsi_Length = INQUIRY_DATA_LENGTH;
     scsi_cmd.scsi_Command = cmd;
     scsi_cmd.scsi_CmdLength = 6;
     scsi_cmd.scsi_Flags = SCSIF_READ | SCSIF_AUTOSENSE;
@@ -304,6 +317,8 @@ static BOOL scsi_inquiry(int target, int lun,
     if (error != 0 || scsi_cmd.scsi_Status != 0) {
         return FALSE;
     }
+
+    memcpy(inquiry_data, inquiry_buf, sizeof(struct SCSIInquiryData));
 
     return TRUE;
 }

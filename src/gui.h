@@ -22,7 +22,7 @@ typedef enum {
     BTN_PRINT,
 
     /* Main view toggles */
-    BTN_SOFTWARE_CYCLE,     /* Libraries/Devices/Resources cycle */
+    BTN_SOFTWARE_CYCLE,     /* Software overview/list cycle */
     BTN_HARDWARE_CYCLE,     /* Hardwareinfo cycle */
     BTN_SOFTWARE_UP,        /* Software list scroll up */
     BTN_SOFTWARE_DOWN,      /* Software list scroll down */
@@ -55,6 +55,7 @@ typedef enum {
     /* Boards view buttons */
     BTN_BOARD_PREV,
     BTN_BOARD_NEXT,
+    BTN_BOARD_DISPLAY,
     BTN_BOARD_EXIT,
 
     /* SCSI view button */

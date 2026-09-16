@@ -94,11 +94,12 @@ BOOL detect_hardware(void)
     read_ssp();
     debug("  hw: Detecting chipset...\n");
     detect_chipset();
+    detect_native_graphics();
     debug("  hw: Detecting system chips...\n");
     detect_system_chips();
     debug("  hw: Detecting clock...\n");
     detect_clock();
-    debug("  hw: Detecting batt mem ressources...\n");
+    debug("  hw: Detecting batt mem resources...\n");
     detect_batt_mem();
     debug("  hw: Detecting frequencies...\n");
     detect_frequencies();
@@ -107,11 +108,26 @@ BOOL detect_hardware(void)
     debug("  hw: Generating comment...\n");
     generate_comment();
 
-    /* Get Kickstart info */
-    UWORD kick_version = *((volatile UWORD *)KICK_VERSION);
-    UWORD kick_revision = *((volatile UWORD *)KICK_REVISION);
-    hw_info.kickstart_version = kick_version;
-    hw_info.kickstart_revision = kick_revision;
+    detect_kickstart();
+
+    debug("  hw: Hardware detection complete.\n");
+    return TRUE;
+}
+
+void detect_kickstart(void)
+{
+    ULONG physical_rom = 0;
+
+    if (IdentifyBase && IdentifyBase->lib_Version >= 38)
+        physical_rom = IdHardwareNumTags(IDHW_ROMVER, TAG_DONE);
+
+    if (physical_rom) {
+        hw_info.kickstart_version = physical_rom & 0xffff;
+        hw_info.kickstart_revision = physical_rom >> 16;
+    } else {
+        hw_info.kickstart_version = *((volatile UWORD *)KICK_VERSION);
+        hw_info.kickstart_revision = *((volatile UWORD *)KICK_REVISION);
+    }
 
     /* Fallback to exec version if above didn't provide ROM version */
     if (hw_info.kickstart_version == 0) {
@@ -132,15 +148,13 @@ BOOL detect_hardware(void)
     //save SysBase-Version in case we are softkicking
     hw_info.kickstart_patch_version = SysBase->LibNode.lib_Version;
     hw_info.kickstart_patch_revision = SysBase->SoftVer;
-
-    debug("  hw: Hardware detection complete.\n");
-    return TRUE;
 }
 
 void detect_amiga_model(void)
 {
     STRPTR model = NULL;
 
+    hw_info.amiga_model_id = ~0UL;
     copy_string(hw_info.amiga_model_string, get_string(MSG_NA),
                 sizeof(hw_info.amiga_model_string));
 
@@ -151,11 +165,21 @@ void detect_amiga_model(void)
     copy_string(hw_info.amiga_model_string, get_string(MSG_UNKNOWN),
                 sizeof(hw_info.amiga_model_string));
 
+    hw_info.amiga_model_id = IdHardwareNumTags(IDHW_SYSTEM, TAG_DONE);
     model = IdHardwareTags(IDHW_SYSTEM, TAG_DONE);
     if (model && model[0]) {
         copy_string(hw_info.amiga_model_string, (const char *)model,
                     sizeof(hw_info.amiga_model_string));
     }
+}
+
+void detect_native_graphics(void)
+{
+    hw_info.native_graphics = NATIVE_GRAPHICS_OCS;
+    if ((GfxBase->ChipRevBits0 & SETCHIPREV_AA) == SETCHIPREV_AA)
+        hw_info.native_graphics = NATIVE_GRAPHICS_AGA;
+    else if ((GfxBase->ChipRevBits0 & SETCHIPREV_ECS) == SETCHIPREV_ECS)
+        hw_info.native_graphics = NATIVE_GRAPHICS_ECS;
 }
 
 static BOOL dt_name_matches(const char *want, const char *name)
@@ -564,8 +588,10 @@ void detect_mmu(void)
                 hw_info.mmu_enabled = TRUE;
                 break;
             case MUTYPE_68060:
-                hw_info.mmu_type = MMU_68060;
-                copy_string(hw_info.mmu_string, "68060",
+                hw_info.mmu_type = hw_info.cpu_type == CPU_68080 ?
+                    MMU_68080 : MMU_68060;
+                copy_string(hw_info.mmu_string,
+                            hw_info.cpu_type == CPU_68080 ? "68080" : "68060",
                             sizeof(hw_info.mmu_string));
                 hw_info.mmu_enabled = TRUE;
                 break;
@@ -587,7 +613,7 @@ void detect_mmu(void)
                     snprintf(hw_info.cpu_string, sizeof(hw_info.cpu_string), "68EC060");
                     break;
                 case CPU_68080:
-                    hw_info.mmu_type = MMU_68060;
+                    hw_info.mmu_type = MMU_68080;
                     snprintf(hw_info.mmu_string, sizeof(hw_info.mmu_string), "68080");
                     break;
                 default:
@@ -670,7 +696,7 @@ void detect_mmu(void)
                 break;
             case CPU_68080:
                 snprintf(hw_info.mmu_string, sizeof(hw_info.mmu_string), "68080 (%s)", get_string(MSG_UNCERTAIN));
-                hw_info.mmu_type = MMU_68060;
+                hw_info.mmu_type = MMU_68080;
                 break;
             default:
                 copy_string(hw_info.mmu_string, get_string(MSG_UNKNOWN),
@@ -799,7 +825,7 @@ void detect_chipset(void)
 
     /*Get Paula revision*/
     hw_info.paula_rev = *((volatile UWORD *)(CUSTOM_PAULA_ID));
-    hw_info.paula_rev &= 0x00FE; //mask irelevant bits
+    hw_info.paula_rev &= 0x00FE; //mask irrelevant bits
     switch (hw_info.paula_rev) {
         case 0:
             hw_info.paula_type = PAULA_ORIG;
@@ -964,7 +990,7 @@ void detect_clock(void)
             *((volatile unsigned char *)(RTC_BASE+RTC_REG_C)) = 5;
             val = *((volatile unsigned char *)(RTC_BASE+RTC_REG_C));
             val &= RTC_MASK;
-            if (val == 0) { // comming closer: now read register A, which should be '0001!
+            if (val == 0) { // coming closer: now read register A, which should be '0001!
                 val = *((volatile unsigned char *)(RTC_BASE+RTC_REG_A));
                 val &= RTC_MASK;
                 if (val ==1 ) { // bingo! RP5C01A
@@ -1026,7 +1052,7 @@ void detect_batt_mem(void)
 
     if ( hw_info.clock_type == CLOCK_RP5C01 //clock with NV-ram
         && hw_info.ramsey_rev > 0 //we have a ramsey (and might be a A3000
-        && openBattMem() //batt mem ressource is open
+        && openBattMem() //batt mem resource is open
         ) {
         hw_info.battMemData.valid_data = readBattMem(&hw_info.battMemData);
     }
@@ -1066,13 +1092,13 @@ void detect_ramsey(void)
         return;
     }
 
-    hw_info.ramsey_rev = GetRamseyRev(); //In A4000: must be done in supervisore mode!
+    hw_info.ramsey_rev = GetRamseyRev(); //In A4000: must be done in supervisor mode!
     if ( hw_info.ramsey_rev == 0xFF ||  // unlikely!
         hw_info.ramsey_rev == 0x00 ) // unlikely!
     {
         hw_info.ramsey_rev = 0;
     }else {
-        hw_info.ramsey_ctl = GetRamseyCtrl(); //In A4000: must be done in supervisore mode!
+        hw_info.ramsey_ctl = GetRamseyCtrl(); //In A4000: must be done in supervisor mode!
 
         hw_info.ramsey_page_enabled = hw_info.ramsey_ctl & RAMSEY_PAGE_MODE;
         hw_info.ramsey_burst_enabled = hw_info.ramsey_ctl & RAMSEY_BURST_MODE;
@@ -1193,7 +1219,7 @@ void detect_gary(void)
         If the value changes with the writes, it's a FatGary
 
         A1000 mirrors the chipregisters.
-        A save register to read is DMACONR. If this register is mirrored A1000 is there.
+        A safe register to read is DMACONR. If this register is mirrored A1000 is there.
 
         A600/A1200 have an undocumented revision register at DE1000, but the 8-bit code is
         "morsed" only via the highest byte
@@ -1206,7 +1232,7 @@ void detect_gary(void)
     A3000(T/+), A4000(T)
     We have to do this first, because a A3000 with a 67040 crashes on the A1000-tests due to mmu-restrictions
     Test, if we have the Power-Up-Register (A3000/4000).
-    This writes a 0x80 and a zero to DMACONR on a A1000, which should be save
+    This writes a 0x80 and a zero to DMACONR on a A1000, which should be safe
     */
     val =  *((volatile unsigned char *)(FAT_GARY_POWER_REG)); //save old value
     //write a value
@@ -1242,12 +1268,12 @@ void detect_gary(void)
 
     //test for mirroring (A1000/ A2000BSW)
     testVal1 = *((volatile UWORD *)(CUSTOM_JOY0DAT));
-    testVal2 = *((volatile UWORD *)(CUSTOM_JOY1DAT)); //avoid bus stickyness (A3000)
+    testVal2 = *((volatile UWORD *)(CUSTOM_JOY1DAT)); //avoid bus stickiness (A3000)
     testVal2 = *((volatile UWORD *)(CUSTOM_JOY0DAT_MIRR));
     if (testVal1 == testVal2) {
-        //do another test to be save
+        //do another test to be safe
         testVal1 = *((volatile UWORD *)(CUSTOM_JOY1DAT));
-        testVal2 = *((volatile UWORD *)(CUSTOM_JOY0DAT)); //avoid bus stickyness (A3000)
+        testVal2 = *((volatile UWORD *)(CUSTOM_JOY0DAT)); //avoid bus stickiness (A3000)
         testVal2 = *((volatile UWORD *)(CUSTOM_JOY1DAT_MIRR));
         if (testVal1 == testVal2) {
             hw_info.gary_type = GARY_A1000;
@@ -1387,7 +1413,7 @@ void detect_system_chips(void)
 }
 
 /*
- * Detect screen frequencies
+ * Detect display and system timing frequencies
  */
 void detect_frequencies(void)
 {
@@ -1396,17 +1422,22 @@ void detect_frequencies(void)
 
     if (hw_info.is_pal) {
         hw_info.horiz_freq = 15625;     /* 15.625 kHz */
-        hw_info.vert_freq = 50;
-        hw_info.supply_freq = 50;
         copy_string(hw_info.mode_string, get_string(MSG_MODE_PAL),
                     sizeof(hw_info.mode_string));
     } else {
         hw_info.horiz_freq = 15734;     /* 15.734 kHz */
-        hw_info.vert_freq = 60;
-        hw_info.supply_freq = 60;
         copy_string(hw_info.mode_string, get_string(MSG_MODE_NTSC),
                     sizeof(hw_info.mode_string));
     }
+
+    /* Exec reports these independently: a PAL display can coexist with
+     * a 60 Hz supply tick (issue #57). Both fields exist on Kickstart 1.3. */
+    hw_info.vert_freq = SysBase->VBlankFrequency;
+    hw_info.supply_freq = SysBase->PowerSupplyFrequency;
+
+    debug("    frequencies: DisplayFlags=$%04lx VBlankFrequency=%lu "
+          "PowerSupplyFrequency=%lu\n",
+          (ULONG)GfxBase->DisplayFlags, hw_info.vert_freq, hw_info.supply_freq);
 
     /* EClock frequency from exec */
     hw_info.eclock_freq = SysBase->ex_EClockFrequency;

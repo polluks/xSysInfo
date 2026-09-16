@@ -234,7 +234,7 @@ static const char *default_strings[MSG_COUNT] = {
     /* Comments based on system speed */
     /* MSG_COMMENT_WARP11 */         "WARP 11!",
     /* MSG_COMMENT_LUDICROUS */      "Ludicrous speed!",
-    /* MSG_COMMENT_RIDICULUS */      "Ridiculus speed!",
+    /* MSG_COMMENT_RIDICULOUS */     "Ridiculous speed!",
     /* MSG_COMMENT_BLAZING */        "Blazingly fast!",
     /* MSG_COMMENT_VERY_FAST */      "Very fast!",
     /* MSG_COMMENT_FAST */           "Fast system",
@@ -269,7 +269,7 @@ static const char *default_strings[MSG_COUNT] = {
     /* MSG_SCAN_LUN */               "Scan LUNs",
     /* MSG_SYNC_TRANS */             "Sync",
     /* MSG_FAST_SYNC */              "Fast Sync",
-    /* MSG_QUEUING */                "Queing",
+    /* MSG_QUEUING */                "Queuing",
     /* MSG_SCSI_HOST_ID */           "SCSI_ID",
     /* MSG_LONG */                   "LONG",
     /* MSG_SHORT */                  "SHORT",
@@ -281,7 +281,7 @@ static const char *default_strings[MSG_COUNT] = {
     /* MSG_SOUND_SYSTEM */           "Sound",
     /* MSG_PAULA_UNKNOWN */          "Unknown Paula",
     /* MSG_PAULA_ORIG */             "Paula 8364",
-    /* MSG_PAULA_SAGA */             "SAGA Paula",
+    /* MSG_PAULA_SAGA */             "SAGA Arne",
     /* MSG_DENISE_OCS */             "Denise 8362 (OCS)",
     /* MSG_DENISE_ECS */             "Denise 8373 (ECS)",
     /* MSG_DENISE_LISA */            "Lisa 4203",
@@ -314,6 +314,18 @@ static const char *default_strings[MSG_COUNT] = {
     /* MSG_MMU_FLAGS7_HINT */        "IND=Indirect +=more flags",
     /* MSG_SLOT_ZORRO */             "ZORRO",
 
+    /* MSG_SOFTWARE_OVERVIEW */      "OVERVIEW",
+    /* MSG_OPERATING_SYSTEM */       "OS",
+    /* MSG_ACTIVE_ROM */             "Active ROM",
+    /* MSG_WORKBENCH */              "Workbench",
+    /* MSG_SETPATCH */               "SetPatch",
+    /* MSG_GRAPHICS_SYSTEM */        "Graphics",
+    /* MSG_NATIVE_GRAPHICS */        "AmigaOS (native)",
+    /* MSG_BOARD_NAMES */            "NAMES",
+    /* MSG_BOARD_DECIMAL */          "DEC",
+    /* MSG_BOARD_HEX */              "HEX",
+    /* MSG_UNKNOWN_OS */             "Unknown OS",
+    /* MSG_BUS_MHZ */                "Bus MHz",
 };
 
 /* Get string by ID - uses catalog if available, falls back to English */

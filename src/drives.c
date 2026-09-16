@@ -51,6 +51,8 @@ DriveList drive_list;
 #define DRIVE_SPEED_TARGET_US   1000000UL
 #define DRIVE_SPEED_MAX_US      2000000UL
 #define DRIVE_SPEED_MAX_BYTES   (32UL * 1024UL * 1024UL)
+#define DRIVE_SPEED_FLOPPY_TRACKS 3UL
+#define DRIVE_SPEED_DD_SECTORS    11UL
 
 #define DRIVE_INFO_X        120
 #define DRIVE_VALUE_OFFSET  224
@@ -785,6 +787,25 @@ static void prune_drive_list(void)
 }
 
 /*
+ * Helper: Sort drives alphabetically by DOS device name
+ */
+static void sort_drive_list(void)
+{
+    ULONG i, j;
+
+    for (i = 0; i + 1 < drive_list.count; i++) {
+        for (j = 0; j + 1 < drive_list.count - i; j++) {
+            if (strcmp(drive_list.drives[j].device_name,
+                       drive_list.drives[j + 1].device_name) > 0) {
+                DriveInfo temp = drive_list.drives[j];
+                drive_list.drives[j] = drive_list.drives[j + 1];
+                drive_list.drives[j + 1] = temp;
+            }
+        }
+    }
+}
+
+/*
  * Enumerate all drives
  */
 void enumerate_drives(void)
@@ -809,6 +830,9 @@ void enumerate_drives(void)
     debug("  drives: Prune non-drives...\n");
     /* Fourth pass: Drop entries with no drive evidence */
     prune_drive_list();
+
+    debug("  drives: Sort drive list...\n");
+    sort_drive_list();
 
     debug("  drives: Check SCSI-support...\n");
     /* Fifth pass: Check SCSI support */
@@ -1138,7 +1162,6 @@ ULONG measure_drive_speed(ULONG index)
     struct EClockVal start, end;
     uint64_t elapsed;
     ULONG bytes_per_sec = 0;
-    ULONG num_reads = 0;
     ULONG max_test_bytes;
     ULONG target_us = 0;
     ULONG max_us = 0;
@@ -1187,10 +1210,15 @@ ULONG measure_drive_speed(ULONG index)
     block_size = drive->bytes_per_block ? drive->bytes_per_block : 512;
     is_floppy = is_floppy_device(get_geometry_total_blocks(drive));
     if (is_floppy) {
-        /* Floppy: read small amount (one track worth) */
-        buffer_size = 11 * 512;  /* 11 sectors * 512 bytes */
-        num_reads = 2;
-        max_test_bytes = buffer_size * num_reads;
+        ULONG sectors_per_track = drive->sectors_per_track ?
+                                  drive->sectors_per_track :
+                                  DRIVE_SPEED_DD_SECTORS;
+
+        /* Read three complete logical tracks.  Besides giving the test more
+         * data, this includes both a side change and a cylinder step on a
+         * normal two-sided floppy. */
+        buffer_size = sectors_per_track * block_size;
+        max_test_bytes = buffer_size * DRIVE_SPEED_FLOPPY_TRACKS;
     } else {
         buffer_size = DRIVE_SPEED_HARD_CHUNK;
         max_test_bytes = DRIVE_SPEED_MAX_BYTES;
@@ -1349,7 +1377,7 @@ retry_speed_test:
     /* Perform reads */
     while (TRUE) {
         if (is_floppy) {
-            if (reads_done >= num_reads) {
+            if (total_read >= max_test_bytes) {
                 break;
             }
         } else {
@@ -1441,6 +1469,21 @@ retry_speed_test:
 cleanup:
     if (buffer) FreeMem(buffer, buffer_size);
     if (device_opened) {
+        if (is_floppy) {
+            /* Reads start a floppy motor automatically, but closing the
+             * device does not stop it.  Turn it off on every exit path. */
+            io->io_Command = TD_MOTOR;
+            io->io_Data = NULL;
+            io->io_Length = 0;
+            io->io_Offset = 0;
+            io->io_Actual = 0;
+            io->io_Flags = 0;
+
+            error = DoIO((struct IORequest *)io);
+            debug("  drives: Motor off on %s unit %ld: error %ld/%ld\n",
+                  (LONG)drive->handler_name, (LONG)drive->unit_number,
+                  (LONG)error, (LONG)io->io_Error);
+        }
         CloseDevice((struct IORequest *)io);
         WaitTOF();
     }
@@ -1500,9 +1543,13 @@ static void draw_drive_speed_row(void)
 static void draw_drive_value(WORD y, const char *value)
 {
     struct RastPort *rp = app->rp;
+    WORD top = y - rp->TxBaseline;
 
+    /* Clear only this font row: a taller rectangle erases the previous
+     * row's descenders with the drive view's nine-pixel line spacing. */
     SetAPen(rp, COLOR_PANEL_BG);
-    RectFill(rp, DRIVE_VALUE_X, y - 8, DRIVE_VALUE_MAX_X, y + 2);
+    RectFill(rp, DRIVE_VALUE_X, top, DRIVE_VALUE_MAX_X,
+             top + rp->TxHeight - 1);
     SetAPen(rp, COLOR_HIGHLIGHT);
     SetBPen(rp, COLOR_PANEL_BG);
     draw_text_clipped(DRIVE_VALUE_X, y, value,

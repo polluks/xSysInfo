@@ -56,6 +56,8 @@ RAMSEY_CTRL EQU $DE0003
 	XDEF	_SetCacheBits
 	XDEF	_GetRamseyRev
 	XDEF	_GetRamseyCtrl
+	XDEF	_RunRamseyProbe
+	XREF	_sample_ramsey_refreshes
 
 _DoFlops:
 	cmp.l	#ASM_FPU_68881,d1		;is it 68881-code?
@@ -337,7 +339,7 @@ m68020_mmu:
 	MACHINE 68851
         ori.w #$0700,sr                 ;disable interrupts
         movem.l	 d2-d5/a2-a3,-(sp)
-        lea -$14c(a7),a7				;reserve room for termporary
+        lea -$14c(a7),a7				;reserve room for temporary
                                         ;exception vectors
 		;structure as follows:
         ;defvar
@@ -370,7 +372,7 @@ m68020_mmu:
         move.l a1,$e0(a7)
         move.l a1,$e4(a7)
         move.l a1,$e8(a7)
-        lea $114(a7),a3           		;place here the new root pointer (temporarely)
+        lea $114(a7),a3           		;place here the new root pointer (temporarily)
         move.l a3,d2
         addq.l #$8,d2
         addq.l #$7,d2
@@ -415,7 +417,7 @@ m68030_mmu:
 	MACHINE 68020 pmmu
         ori.w #$0700,sr                 ;disable interrupts
         movem.l	 d2-d5/a2-a3,-(sp)
-        lea -$14c(a7),a7					;reserve room for termporary
+        lea -$14c(a7),a7					;reserve room for temporary
                                         ;exception vectors
 		;structure as follows:
         ;defvar
@@ -448,7 +450,7 @@ m68030_mmu:
         move.l a1,$e0(a7)
         move.l a1,$e4(a7)
         move.l a1,$e8(a7)
-        lea $114(a7),a3           		;place here the new root pointer (temporarely)
+        lea $114(a7),a3           		;place here the new root pointer (temporarily)
         move.l a3,d2
         addq.l #$8,d2
         addq.l #$7,d2
@@ -551,7 +553,7 @@ m68040_mmu:
 ;*************************************************
         MACHINE mc68040
         ori.w #$0700,sr                 ;disable interrupts
-        lea -$80(a7),a7                 ;reserve room for termporary
+        lea -$80(a7),a7                 ;reserve room for temporary
                                         ;exception vectors
         movec.l vbr,a0                  ;saveback VBR
         lea .illegal(pc),a1             ;entry for Illegal/LineF
@@ -613,6 +615,21 @@ _GetRamseyCtrl:
 _read_ramsey_ctrl:
 	lea	RAMSEY_CTRL,a0
 	move.b	(a0),d0
+	rte
+
+; Run a bounded refresh sample with no task switches or interrupt jitter.
+; RTE restores the caller's original interrupt mask on every return path.
+_RunRamseyProbe:
+	movem.l	a5/a6,-(sp)
+	lea	_ramsey_probe_super(pc),a5
+	move.l	$4.w,a6
+	jsr	_LVOSupervisor(a6)
+	movem.l	(sp)+,a5/a6
+	rts
+
+_ramsey_probe_super:
+	ori.w	#$0700,sr
+	jsr	(_sample_ramsey_refreshes).l
 	rte
 
 

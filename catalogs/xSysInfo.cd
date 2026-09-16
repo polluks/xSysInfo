@@ -553,8 +553,8 @@ WARP 11!
 MSG_COMMENT_LUDICROUS (//)
 Ludicrous speed!
 ;
-MSG_COMMENT_RIDICULUS (//)
-Ridiculus speed!
+MSG_COMMENT_RIDICULOUS (//)
+Ridiculous speed!
 ;
 MSG_COMMENT_BLAZING (//)
 Blazingly fast!
@@ -655,7 +655,7 @@ MSG_FAST_SYNC (//)
 Fast Sync
 ;
 MSG_QUEUING (//)
-Queing
+Queuing
 ;
 MSG_SCSI_HOST_ID (//)
 SCSI_ID
@@ -691,7 +691,7 @@ MSG_PAULA_ORIG (//)
 Paula 8364
 ;
 MSG_PAULA_SAGA (//)
-SAGA Paula
+SAGA Arne
 ;
 MSG_DENISE_OCS (//)
 Denise 8362 (OCS)
@@ -784,4 +784,42 @@ IND=Indirect +=more flags
 ;
 MSG_SLOT_ZORRO (//)
 ZORRO
+;
+MSG_SOFTWARE_OVERVIEW (//)
+OVERVIEW
+;
+MSG_OPERATING_SYSTEM (//)
+OS
+;
+MSG_ACTIVE_ROM (//)
+Active ROM
+;
+MSG_WORKBENCH (//)
+Workbench
+;
+MSG_SETPATCH (//)
+SetPatch
+;
+MSG_GRAPHICS_SYSTEM (//)
+Graphics
+;
+MSG_NATIVE_GRAPHICS (//)
+AmigaOS (native)
+;
+; Boards display cycle (button labels, max 10 characters)
+;
+MSG_BOARD_NAMES (//10)
+NAMES
+;
+MSG_BOARD_DECIMAL (//10)
+DEC
+;
+MSG_BOARD_HEX (//10)
+HEX
+;
+MSG_UNKNOWN_OS (//)
+Unknown OS
+;
+MSG_BUS_MHZ (//)
+Bus MHz
 ;

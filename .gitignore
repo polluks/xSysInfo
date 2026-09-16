@@ -1,8 +1,8 @@
 *.o
+/build/
 attic/
 catalogs/build/
 downloads/
-3rdparty/mmu/reference/
 xSysInfo
 xsysinfo.adf
 xsysinfo-*.adf

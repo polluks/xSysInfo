@@ -95,12 +95,14 @@ typedef enum {
     VIEW_SCSI
 } ViewMode;
 
-/* Software list types */
+/* Software pages */
 typedef enum {
+    SOFTWARE_OVERVIEW,
     SOFTWARE_LIBRARIES,
     SOFTWARE_DEVICES,
     SOFTWARE_RESOURCES,
-    SOFTWARE_MMU
+    SOFTWARE_MMU,
+    SOFTWARE_COUNT
 } SoftwareType;
 
 /* Software list types */
@@ -126,6 +128,14 @@ typedef enum {
     SCALE_SHRINK,       /* A4000 at 50%, cap faster systems */
     SCALE_EXPAND        /* Linear scale to fit all */
 } BarScale;
+
+/* Boards view display modes */
+typedef enum {
+    BOARD_DISPLAY_NAMES,
+    BOARD_DISPLAY_DECIMAL,
+    BOARD_DISPLAY_HEX,
+    BOARD_DISPLAY_COUNT
+} BoardDisplay;
 
 /* Display mode (from tooltype or command line) */
 typedef enum {
@@ -158,12 +168,14 @@ typedef struct {
     ViewMode current_view;
 
     /* Main view state */
-    SoftwareType software_type;     /* Which list is shown */
+    SoftwareType software_type;     /* Which software page is shown */
     HardwareType hardware_type;     /* Which list is shown */
     LONG software_scroll;           /* Scroll offset */
     BarScale bar_scale;             /* Current bar graph scale */
     BOOL benchmarks_run;            /* Have benchmarks been executed? */
     BOOL scrollbar_dragging;        /* TRUE while dragging scrollbar */
+    WORD scrollbar_drag_y;          /* Mouse Y when the knob was grabbed */
+    LONG scrollbar_drag_scroll;     /* Scroll offset when the knob was grabbed */
     WORD pressed_button;            /* Currently pressed button ID, or -1 */
 
     /* Memory view state */
@@ -177,6 +189,7 @@ typedef struct {
     /* Boards view state */
     LONG board_scroll;              /* Scroll offset */
     LONG board_count;               /* Total boards */
+    BoardDisplay board_display;     /* Names, decimal IDs, or hexadecimal IDs */
 
     /* Exit flag */
     BOOL running;

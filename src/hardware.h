@@ -23,7 +23,7 @@
 #define RAMSEY_WRAP_MODE 0x4
 #define RAMSEY_SIZE 0x8
 #define RAMSEY_SKIP_MODE 0x10
-#define RAMSEY_REFRESH_MODE 0x20
+#define RAMSEY_REFRESH_MODE 0x60
 #define RTC_BASE   0xDC0000
 #define RTC_REG_A    0x2B
 #define RTC_REG_C   0x33
@@ -164,6 +164,13 @@ typedef enum{
     FAT_GARY
 }GaryType;
 
+/* Native graphics capabilities enabled by graphics.library */
+typedef enum {
+    NATIVE_GRAPHICS_OCS,
+    NATIVE_GRAPHICS_ECS,
+    NATIVE_GRAPHICS_AGA
+} NativeGraphicsType;
+
 /* Hardware information structure */
 typedef struct {
     /* CPU */
@@ -171,6 +178,7 @@ typedef struct {
     UWORD cpu_rev;
     char cpu_revision[16];
     ULONG cpu_mhz;          /* CPU MHz * 100 */
+    ULONG bus_mhz;          /* Measured motherboard MHz * 100; 0 unavailable */
     char cpu_string[32];
 
     /* FPU */
@@ -231,13 +239,15 @@ typedef struct {
     BOOL ramsey_wrap_enabled;
     BOOL ramsey_size_1M;
     BOOL ramsey_skip_enabled;
-    ULONG ramsey_refresh_rate;     /* 0 = ???, 1 = ???, 2 = ???, 3 = ??? */
+    ULONG ramsey_refresh_rate;     /* 0 = 156, 1 = 240, 2 = 372 clocks, 3 = off */
 
-    /* BattMemRessources (if available)*/
+    /* BattMem resources (if available)*/
     BattMemData battMemData;
 
     /* System info */
+    ULONG amiga_model_id;       /* IDSYS_*; ~0UL when Identify is unavailable */
     char amiga_model_string[64];
+    NativeGraphicsType native_graphics;
     BOOL has_zorro_slots;
     BOOL has_pcmcia;
     char card_slot_string[32];
@@ -282,6 +292,7 @@ APTR mmu_physical_address(APTR addr);
 void read_vbr(void);
 void read_ssp(void);
 void detect_chipset(void);
+void detect_native_graphics(void);
 void detect_clock(void);
 void detect_batt_mem(void);
 void detect_gary(void);

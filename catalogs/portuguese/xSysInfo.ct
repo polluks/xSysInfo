@@ -511,7 +511,7 @@ WARP 11!
 MSG_COMMENT_LUDICROUS
 Velocidade absurda!
 ;
-MSG_COMMENT_RIDICULUS
+MSG_COMMENT_RIDICULOUS
 Velocidade ridícula!
 ;
 MSG_COMMENT_BLAZING
@@ -647,7 +647,7 @@ MSG_PAULA_ORIG
 Paula 8364
 ;
 MSG_PAULA_SAGA
-SAGA Paula
+SAGA Arne
 ;
 MSG_DENISE_OCS
 Denise 8362 (OCS)
@@ -738,4 +738,42 @@ IND=Indireto +=mais flags
 ;
 MSG_SLOT_ZORRO
 ZORRO
+;
+MSG_SOFTWARE_OVERVIEW
+RESUMO
+;
+MSG_OPERATING_SYSTEM
+SO
+;
+MSG_ACTIVE_ROM
+ROM ativa
+;
+MSG_WORKBENCH
+Workbench
+;
+MSG_SETPATCH
+SetPatch
+;
+MSG_GRAPHICS_SYSTEM
+Gráficos
+;
+MSG_NATIVE_GRAPHICS
+AmigaOS (nativo)
+;
+; Boards display cycle (button labels, max 10 characters)
+;
+MSG_BOARD_NAMES
+NOMES
+;
+MSG_BOARD_DECIMAL
+DEC
+;
+MSG_BOARD_HEX
+HEX
+;
+MSG_UNKNOWN_OS
+SO desconhecido
+;
+MSG_BUS_MHZ
+Bus MHz
 ;

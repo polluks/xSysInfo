@@ -114,10 +114,11 @@ static void draw_speed_panel(void);
 static void refresh_speed_panel_contents(void);
 static void refresh_speed_bars(BOOL redraw_scale_button);
 static void draw_hardware_panel(void);
+static void draw_hardware_panel_contents(void);
 static void draw_bottom_buttons(void);
 static void draw_cache_buttons(void);
 static void clear_buttons(void);
-static void update_software_list(void);
+static void update_software_list(BOOL clear_content);
 static void update_hardware_text(void);
 static void refresh_all_cache_buttons(void);
 static void show_timed_overlay(const char *message, ULONG ticks);
@@ -236,6 +237,17 @@ Button *find_button(ButtonID id)
     return NULL;
 }
 
+static const char *get_software_page_label(void)
+{
+    switch (app->software_type) {
+        case SOFTWARE_LIBRARIES: return get_string(MSG_LIBRARIES);
+        case SOFTWARE_DEVICES:   return get_string(MSG_DEVICES);
+        case SOFTWARE_RESOURCES: return get_string(MSG_RESOURCES);
+        case SOFTWARE_MMU:       return get_string(MSG_MMU_ENTRIES);
+        default:                return get_string(MSG_SOFTWARE_OVERVIEW);
+    }
+}
+
 static const char *get_hardware_page_label(void)
 {
     switch (app->hardware_type) {
@@ -296,7 +308,8 @@ void redraw_button(ButtonID id)
     } else if (id == BTN_SOFTWARE_DOWN) {
         draw_scroll_arrow(btn->x, btn->y, btn->width, btn->height,
                           FALSE, btn->pressed);
-    } else if (id == BTN_SOFTWARE_CYCLE || id == BTN_SCALE_TOGGLE || id == BTN_HARDWARE_CYCLE) {
+    } else if (id == BTN_SOFTWARE_CYCLE || id == BTN_SCALE_TOGGLE ||
+               id == BTN_HARDWARE_CYCLE || id == BTN_BOARD_DISPLAY) {
         draw_cycle_button(btn);
     } else {
         draw_button(btn);
@@ -325,25 +338,22 @@ void main_view_update_buttons(void)
     /* Software type cycle button */
     add_button(SOFTWARE_PANEL_X + SOFTWARE_PANEL_W - 98,
                SOFTWARE_PANEL_Y + 2, 92, 12,
-               app->software_type == SOFTWARE_LIBRARIES ?
-                   get_string(MSG_LIBRARIES) :
-               app->software_type == SOFTWARE_DEVICES ?
-                   get_string(MSG_DEVICES) :
-               app->software_type == SOFTWARE_RESOURCES ?
-                   get_string(MSG_RESOURCES):
-                   get_string(MSG_MMU_ENTRIES),
+               get_software_page_label(),
                BTN_SOFTWARE_CYCLE, TRUE);
 
     /* Software scroll buttons (arrows on right side) */
     add_button(SOFTWARE_PANEL_X + SOFTWARE_PANEL_W - 14,
                SOFTWARE_PANEL_Y + 15, 12, 10,
-               NULL, BTN_SOFTWARE_UP, TRUE);   /* Up arrow */
+               NULL, BTN_SOFTWARE_UP,
+               app->software_type != SOFTWARE_OVERVIEW);
     add_button(SOFTWARE_PANEL_X + SOFTWARE_PANEL_W - 14,
                SOFTWARE_PANEL_Y + 15 + 10, 12, SOFTWARE_PANEL_H - 15 - 10 - 12,
-               NULL, BTN_SOFTWARE_SCROLLBAR, TRUE);  /* Scroll bar */
+               NULL, BTN_SOFTWARE_SCROLLBAR,
+               app->software_type != SOFTWARE_OVERVIEW);
     add_button(SOFTWARE_PANEL_X + SOFTWARE_PANEL_W - 14,
                SOFTWARE_PANEL_Y + SOFTWARE_PANEL_H - 12, 12, 10,
-               NULL, BTN_SOFTWARE_DOWN, TRUE); /* Down arrow */
+               NULL, BTN_SOFTWARE_DOWN,
+               app->software_type != SOFTWARE_OVERVIEW);
 
     /* Scale toggle button */
     add_button(SPEED_PANEL_X + SPEED_PANEL_W - 68,
@@ -465,9 +475,10 @@ void main_view_handle_button(ButtonID id)
             break;
 
         case BTN_SOFTWARE_CYCLE:
-            app->software_type = (app->software_type + 1) % 4;
+            app->software_type = (app->software_type + 1) % SOFTWARE_COUNT;
             app->software_scroll = 0;
-            update_software_list();
+            app->scrollbar_dragging = FALSE;
+            update_software_list(TRUE);
             break;
         case BTN_HARDWARE_CYCLE:
             app->hardware_type =
@@ -514,21 +525,16 @@ void main_view_handle_button(ButtonID id)
         case BTN_SOFTWARE_UP:
             if (app->software_scroll > 0) {
                 app->software_scroll--;
-                update_software_list();
+                update_software_list(FALSE);
             }
             break;
 
         case BTN_SOFTWARE_DOWN:
             {
-                SoftwareList *list = app->software_type == SOFTWARE_LIBRARIES ?
-                                         &libraries_list :
-                                     app->software_type == SOFTWARE_DEVICES ?
-                                         &devices_list :
-                                     app->software_type == SOFTWARE_RESOURCES ?
-                                         &resources_list : &mmu_list;
-                if (app->software_scroll < (LONG)list->count - SOFTWARE_LIST_LINES) {
+                SoftwareList *list = get_software_list(app->software_type);
+                if (list && app->software_scroll < (LONG)list->count - SOFTWARE_LIST_LINES) {
                     app->software_scroll++;
-                    update_software_list();
+                    update_software_list(FALSE);
                 }
             }
             break;
@@ -621,24 +627,57 @@ static BOOL xsysinfo_logo_pixel(WORD x, WORD y)
     return (xsysinfo_logo_template[y][x >> 4] & (0x8000 >> (x & 15))) != 0;
 }
 
-static BOOL decorative_dots_available(void)
+static BOOL gradients_available(void)
 {
     return app->screen && app->screen->BitMap.Depth >= 3;
 }
 
-static void draw_dotted_row(WORD x, WORD y, WORD max_x, UWORD pattern)
+#include "bayer-16x16.c"
+
+/* Fill a gradient in 16-pixel-wide bands using pre-generated dither patterns. */
+static void draw_gradient(WORD left, WORD top, WORD width, WORD height,
+                          WORD start_color, WORD end_color)
 {
     struct RastPort *rp = app->rp;
+    LONG offset;
+    LONG bottom = (LONG)top + height - 1;
 
-    if (max_x <= x)
+    if (width <= 0 || height <= 0)
         return;
 
-    SetAPen(rp, COLOR_BACKGROUND);
-    SetDrMd(rp, JAM1);
-    SetDrPt(rp, pattern);
-    Move(rp, x, y);
-    Draw(rp, max_x - 1, y);
-    SetDrPt(rp, 0xffff);
+    SetDrMd(rp, JAM2);
+    SetBPen(rp, start_color);
+    SetAPen(rp, end_color);
+
+    for (offset = 0; offset < width; offset += 16) {
+        WORD fill_width = width - offset;
+        WORD level;
+
+        if (fill_width > 16)
+            fill_width = 16;
+
+        /* Pattern indices run from 0 to 256; a single pixel uses the start color. */
+        level = width > 1 ? (offset * 256) / (width - 1) : 0;
+        SetAfPt(rp, bayer16x16[level], 4); /* 2^4 = 16 pattern rows */
+        RectFill(rp, left + offset, top, left + offset + fill_width - 1, bottom);
+    }
+
+    SetAfPt(rp, NULL, 0);
+}
+
+/* Draw two gradients meeting in the middle, including the extra column for odd widths. */
+static void draw_gradient_3(WORD left, WORD top, WORD width, WORD height,
+                            WORD start_color, WORD middle_color, WORD end_color)
+{
+    WORD left_width;
+
+    if (width <= 0 || height <= 0)
+        return;
+
+    left_width = (width + 1) / 2;
+    draw_gradient(left, top, left_width, height, start_color, middle_color);
+    draw_gradient(left + left_width, top, width - left_width, height,
+                  middle_color, end_color);
 }
 
 static WORD shadow_text_color(void)
@@ -696,18 +735,16 @@ static void draw_header(void)
     WORD subtitle_width;
     UWORD title_len;
     UWORD subtitle_len;
-    WORD x, y;
 
     draw_panel(0, 0, 640, HEADER_HEIGHT, NULL);
 
-    /* Title bar background with a low-color stipple, SysInfo-style */
-    SetAPen(rp, COLOR_BAR_FILL);
-    RectFill(rp, 1, 1, SCREEN_WIDTH - 2, HEADER_HEIGHT - 2);
-    if (decorative_dots_available()) {
-        for (y = 3; y < HEADER_HEIGHT - 2; y += 4) {
-            x = 3 + ((y & 4) ? 2 : 0);
-            draw_dotted_row(x, y, SCREEN_WIDTH - 2, 0x8888);
-        }
+    /* Title bar background with a dithered gradient, SysInfo-style */
+    if (gradients_available()) {
+        draw_gradient_3(1, 1, SCREEN_WIDTH - 2, HEADER_HEIGHT - 2,
+                        COLOR_BAR_FILL, COLOR_BUTTON_DARK, COLOR_BAR_YOU);
+    } else {
+        SetAPen(rp, COLOR_BAR_FILL);
+        RectFill(rp, 1, 1, SCREEN_WIDTH - 2, HEADER_HEIGHT - 2);
     }
 
     draw_xsysinfo_logo(7, 3);
@@ -756,7 +793,6 @@ static void draw_header(void)
 void draw_panel(WORD x, WORD y, WORD w, WORD h, const char *title)
 {
     struct RastPort *rp = app->rp;
-    WORD px, py, dot_start;
     UWORD title_len;
 
     /* Panel background */
@@ -782,15 +818,28 @@ void draw_panel(WORD x, WORD y, WORD w, WORD h, const char *title)
         SetAPen(rp, COLOR_TITLE_BG);
         RectFill(rp, x + 1, y + 1, x + w - 2, y + h - 2);
 
-        if (decorative_dots_available()) {
-            dot_start = x + 4 + title_len * 8 + 8;
-            for (py = y + 3; py <= y + h - 3; py += 4) {
-                px = dot_start + ((py & 4) ? 4 : 0);
-                draw_dotted_row(px, py, x + w - 3, 0x8080);
-            }
+        if (gradients_available()) {
+            draw_gradient_3(x + 2, y + 2, w - 4, h - 4,
+                            COLOR_BUTTON_DARK, COLOR_TITLE_BG, COLOR_BACKGROUND);
         }
 
         SetDrMd(rp, JAM1);
+        if (title_len) {
+            WORD top = y + h - 5 - rp->Font->tf_Baseline;
+            WORD bottom = top + rp->Font->tf_YSize + 2;
+            WORD right = x + 5 + TextLength(rp, (CONST_STRPTR)title,
+                                           title_len);
+
+            /* Cover the text and shadow, leaving the gradient in place. */
+            if (top < y + 1)
+                top = y + 1;
+            if (bottom > y + h - 2)
+                bottom = y + h - 2;
+            if (right > x + w - 2)
+                right = x + w - 2;
+            SetAPen(rp, COLOR_TITLE_BG);
+            RectFill(rp, x + 3, top, right, bottom);
+        }
         SetAPen(rp, shadow_text_color());
         Move(rp, x + 5, y + h - 3);
         Text(rp, (CONST_STRPTR)title, title_len);
@@ -964,6 +1013,24 @@ void draw_scroll_arrow(WORD x, WORD y, WORD w, WORD h, BOOL up, BOOL pressed)
     }
 }
 
+/* Shared by drawing and hit testing; offset includes the track border. */
+static void scrollbar_knob(WORD h, ULONG pos, ULONG total, ULONG visible,
+                           WORD *offset, WORD *size)
+{
+    WORD inner_h = h - 2;
+
+    *offset = 1;
+    *size = inner_h;
+    if (total <= visible) {
+        return;
+    }
+
+    *size = (visible * inner_h) / total;
+    if (*size < 8) *size = 8;
+    if (*size > inner_h) *size = inner_h;
+    *offset += (pos * (inner_h - *size)) / (total - visible);
+}
+
 /*
  * Draw a scroll bar (prop gadget style)
  */
@@ -971,29 +1038,17 @@ void draw_scroll_bar(WORD x, WORD y, WORD w, WORD h, ULONG pos, ULONG total, ULO
 {
     struct RastPort *rp = app->rp;
     WORD knob_y, knob_h;
-    WORD track_h = h;
 
-    /* Draw recessed track background */
+    scrollbar_knob(h, pos, total, visible, &knob_y, &knob_h);
+    knob_y += y;
+
+    /* Clear only the exposed track, so the knob is never blanked first. */
     SetAPen(rp, COLOR_BUTTON_DARK);
-    RectFill(rp, x, y, x + w - 1, y + h - 1);
-
-    /* Draw 3D recessed border for track */
+    if (knob_y > y + 1)
+        RectFill(rp, x + 1, y + 1, x + w - 2, knob_y - 1);
+    if (knob_y + knob_h < y + h - 1)
+        RectFill(rp, x + 1, knob_y + knob_h, x + w - 2, y + h - 2);
     draw_3d_box(x, y, w, h, TRUE);
-
-    /* Calculate knob size and position */
-    if (total <= visible) {
-        /* Everything fits, knob fills track */
-        knob_y = y + 1;
-        knob_h = track_h - 2;
-    } else {
-        /* Calculate proportional knob size (minimum 8 pixels) */
-        knob_h = (visible * (track_h - 2)) / total;
-        if (knob_h < 8) knob_h = 8;
-
-        /* Calculate knob position */
-        WORD travel = track_h - 2 - knob_h;
-        knob_y = y + 1 + (pos * travel) / (total - visible);
-    }
 
     /* Draw knob background */
     SetAPen(rp, COLOR_PANEL_BG);
@@ -1168,11 +1223,22 @@ static void refresh_hardware_benchmark_rows(void)
 
 static void format_mmu_value(char *buffer, size_t size)
 {
+    char mmu_value[sizeof(hw_info.mmu_string)];
+    const char *uncertainty = strstr(hw_info.mmu_string, " (");
+
+    /* detect_mmu() adds a localized uncertainty suffix; keep it compact here. */
+    if (uncertainty) {
+        snprintf(mmu_value, sizeof(mmu_value), "%.*s?",
+                 (int)(uncertainty - hw_info.mmu_string), hw_info.mmu_string);
+    } else {
+        copy_string(mmu_value, hw_info.mmu_string, sizeof(mmu_value));
+    }
+
     if (hw_info.mmu_enabled) {
         snprintf(buffer, size, "%s (%s)",
-                 hw_info.mmu_string, get_string(MSG_IN_USE));
+                 mmu_value, get_string(MSG_IN_USE));
     } else {
-        copy_string(buffer, hw_info.mmu_string, size);
+        copy_string(buffer, mmu_value, size);
     }
 }
 
@@ -1188,11 +1254,8 @@ static void format_mmu_address(char *buffer, size_t size, ULONG address)
     }
 }
 
-/* Forward declaration */
-static void update_software_list(void);
-
 /*
- * Draw software panel (libraries/devices/resources)
+ * Draw software panel (overview/libraries/devices/resources/MMU)
  */
 static void draw_software_panel(void)
 {
@@ -1209,11 +1272,11 @@ static void draw_software_panel(void)
         draw_cycle_button(cycle_btn);
     }
 
-    update_software_list();
+    update_software_list(TRUE);
 }
 
 /*
- * Rebuild hardware-page buttons and redraw the hardware panel.
+ * Rebuild hardware-page buttons and redraw only the changing contents.
  */
 static void update_hardware_text(void)
 {
@@ -1223,80 +1286,173 @@ static void update_hardware_text(void)
     hw_cycle_btn = find_button(BTN_HARDWARE_CYCLE);
 
     if (hw_cycle_btn) {
-        const char *new_hw_label = get_hardware_page_label();
-        if (hw_cycle_btn->label != new_hw_label) {
-            hw_cycle_btn->label = new_hw_label;
-            draw_cycle_button(hw_cycle_btn);
-        }
+        draw_cycle_button(hw_cycle_btn);
     }
-    draw_hardware_panel();
-    draw_bottom_buttons();
+
+    SetAPen(app->rp, COLOR_PANEL_BG);
+    RectFill(app->rp, HARDWARE_PANEL_X + 2, HARDWARE_PANEL_Y + 15,
+             HARDWARE_PANEL_X + HARDWARE_PANEL_W - 3,
+             HARDWARE_PANEL_Y + HARDWARE_PANEL_H - 2);
+    draw_hardware_panel_contents();
+}
+
+static void draw_software_overview(void)
+{
+    static const LocaleStringID labels[] = {
+        MSG_OPERATING_SYSTEM, MSG_ROM, MSG_ACTIVE_ROM,
+        MSG_WORKBENCH, MSG_SETPATCH, MSG_GRAPHICS_SYSTEM
+    };
+    char buffer[80];
+    const char *value;
+    ULONG row;
+    WORD y = SOFTWARE_PANEL_Y + 22;
+
+    for (row = 0; row < sizeof(labels) / sizeof(labels[0]); row++) {
+        value = buffer;
+        switch (row) {
+        case 0:
+            value = system_software.os_name[0] ? system_software.os_name :
+                    get_string(MSG_UNKNOWN_OS);
+            break;
+        case 1:
+            snprintf(buffer, sizeof(buffer), "%u.%u (%lu KB)",
+                     hw_info.kickstart_version, hw_info.kickstart_revision,
+                     (unsigned long)hw_info.kickstart_size);
+            break;
+        case 2:
+            snprintf(buffer, sizeof(buffer), "%u.%u",
+                     hw_info.kickstart_patch_version,
+                     hw_info.kickstart_patch_revision);
+            break;
+        case 3:
+            if (system_software.has_workbench_version)
+                snprintf(buffer, sizeof(buffer), "%u.%u",
+                         system_software.workbench_version,
+                         system_software.workbench_revision);
+            else
+                value = get_string(MSG_NA);
+            break;
+        case 4:
+            if (system_software.has_setpatch_version) {
+                if (system_software.is_tinysetpatch)
+                    snprintf(buffer, sizeof(buffer), "%u.%u (TinySetPatch %u.%u)",
+                             system_software.setpatch_version,
+                             system_software.setpatch_revision,
+                             system_software.tinysetpatch_version,
+                             system_software.tinysetpatch_revision);
+                else
+                    snprintf(buffer, sizeof(buffer), "%u.%u",
+                             system_software.setpatch_version,
+                             system_software.setpatch_revision);
+            } else
+                value = get_string(MSG_NA);
+            break;
+        default:
+            value = system_software.graphics_system;
+            break;
+        }
+        draw_label_value_max(SOFTWARE_PANEL_X + 4, y, get_string(labels[row]),
+                             value, 100, SOFTWARE_PANEL_X + SOFTWARE_PANEL_W - 4);
+        y += TEXT_LINE_HEIGHT;
+    }
+}
+
+/* Erase unused parts of a text field, preserving its foreground pen. */
+static void clear_software_text(WORD x, WORD y, WORD width)
+{
+    struct RastPort *rp = app->rp;
+    UBYTE pen = rp->FgPen;
+    WORD top = y - rp->TxBaseline;
+
+    if (width <= 0) return;
+    SetAPen(rp, COLOR_PANEL_BG);
+    RectFill(rp, x, top, x + width - 1, top + rp->TxHeight - 1);
+    SetAPen(rp, pen);
 }
 
 /*
- * Update software list content only (no panel redraw)
- * Used for partial refresh when cycling through types
+ * JAM2 replaces the character cells; only spaces and the unused tail need
+ * explicit erasing. The MMU page uses the same tight spacing as TightText(),
+ * but must paint its spaces too and stay inside the list's right edge.
  */
-static void update_software_list(void)
+static void draw_software_field(WORD x, WORD y, const char *text,
+                                WORD width, BOOL tight)
 {
     struct RastPort *rp = app->rp;
-    SoftwareList *list;
+    WORD right = x + width;
+    WORD end = x;
+
+    if (tight) {
+        for (; *text; text++) {
+            WORD char_width = *text == ' ' ? 8 :
+                              TextLength(rp, (CONST_STRPTR)text, 1);
+            if (x + char_width > right) break;
+            end = x + char_width;
+            if (*text == ' ') {
+                clear_software_text(x, y, char_width);
+                x = end;
+            } else {
+                Move(rp, x, y);
+                Text(rp, (CONST_STRPTR)text, 1);
+                x += char_width > 7 ? 7 : char_width;
+            }
+        }
+    } else {
+        Move(rp, x, y);
+        draw_text_clipped(x, y, text, width);
+        end = rp->cp_x;
+    }
+    clear_software_text(end, y, right - end);
+}
+
+/* Clear on page changes; overwrite text in place while scrolling. */
+static void update_software_list(BOOL clear_content)
+{
+    struct RastPort *rp = app->rp;
+    SoftwareList *list = get_software_list(app->software_type);
     ULONG i;
     WORD y;
     WORD list_top = SOFTWARE_PANEL_Y + 22;
     char buffer[128];
 
-    /* Get current list */
-    switch (app->software_type) {
-        case SOFTWARE_LIBRARIES:
-            list = &libraries_list;
-            break;
-        case SOFTWARE_DEVICES:
-            list = &devices_list;
-            break;
-        case SOFTWARE_RESOURCES:
-            list = &resources_list;
-            break;
-        case SOFTWARE_MMU:
-            list = &mmu_list;
-            break;
-        default:
-            return;
+    if (clear_content) {
+        /* Page layouts differ, including whether scroll controls are shown. */
+        SetAPen(rp, COLOR_PANEL_BG);
+        RectFill(rp, SOFTWARE_PANEL_X + 2, list_top - 7,
+                 SOFTWARE_PANEL_X + SOFTWARE_PANEL_W - 3,
+                 SOFTWARE_PANEL_Y + SOFTWARE_PANEL_H - 2);
     }
-
-    /* Clear list area (stop before scroll bar at -14) */
-    SetAPen(rp, COLOR_PANEL_BG);
-    RectFill(rp, SOFTWARE_PANEL_X + 2, list_top - 7,
-             SOFTWARE_PANEL_X + SOFTWARE_PANEL_W - 16,
-             SOFTWARE_PANEL_Y + SOFTWARE_PANEL_H - 2);
 
     /* Update cycle button only if label changed */
     Button *cycle_btn = find_button(BTN_SOFTWARE_CYCLE);
     if (cycle_btn) {
-        const char *new_label = app->software_type == SOFTWARE_LIBRARIES ?
-                                    get_string(MSG_LIBRARIES) :
-                                app->software_type == SOFTWARE_DEVICES ?
-                                    get_string(MSG_DEVICES) :
-                                app->software_type == SOFTWARE_RESOURCES ?
-                                    get_string(MSG_RESOURCES):
-                                    get_string(MSG_MMU_ENTRIES);
+        const char *new_label = get_software_page_label();
         if (cycle_btn->label != new_label) {
             cycle_btn->label = new_label;
             draw_cycle_button(cycle_btn);
         }
     }
 
+    set_button_enabled(BTN_SOFTWARE_UP, list != NULL);
+    set_button_enabled(BTN_SOFTWARE_DOWN, list != NULL);
+    set_button_enabled(BTN_SOFTWARE_SCROLLBAR, list != NULL);
+    if (app->software_type == SOFTWARE_OVERVIEW) {
+        draw_software_overview();
+        return;
+    }
+    if (!list)
+        return;
 
     /* Draw scroll arrows with triangles */
     Button *up_btn = find_button(BTN_SOFTWARE_UP);
     Button *down_btn = find_button(BTN_SOFTWARE_DOWN);
     Button *scrollbar_btn = find_button(BTN_SOFTWARE_SCROLLBAR);
 
-    if (up_btn) {
+    if (clear_content && up_btn) {
         draw_scroll_arrow(up_btn->x, up_btn->y, up_btn->width, up_btn->height,
                           TRUE, up_btn->pressed);
     }
-    if (down_btn) {
+    if (clear_content && down_btn) {
         draw_scroll_arrow(down_btn->x, down_btn->y, down_btn->width, down_btn->height,
                           FALSE, down_btn->pressed);
     }
@@ -1309,6 +1465,7 @@ static void update_software_list(void)
     }
 
     /* Draw list entries */
+    SetDrMd(rp, JAM2);
     SetBPen(rp, COLOR_PANEL_BG);
     y = list_top;
     for (i = app->software_scroll;
@@ -1318,36 +1475,35 @@ static void update_software_list(void)
         SoftwareEntry *entry = &list->entries[i];
 
         if (app->software_type == SOFTWARE_MMU) {
+            snprintf(buffer, 50, "%.49s", entry->name);
             if (strlen(entry->name) > 49) {
-                entry->name[48] = '+';
-                entry->name[49] = '\0';
+                buffer[48] = '+';
             }
-            snprintf(buffer, 50, "%-49s", entry->name);
             SetAPen(rp, COLOR_TEXT);
-            Move(rp, SOFTWARE_PANEL_X + 4, y);
-            TightText(rp, SOFTWARE_PANEL_X + 4, y, (CONST_STRPTR)buffer, -1, 8);
+            draw_software_field(SOFTWARE_PANEL_X + 4, y, buffer,
+                                SOFTWARE_PANEL_W - 20, TRUE);
         }
         else {
             /* Name */
             SetAPen(rp, COLOR_TEXT);
-            draw_text_clipped(SOFTWARE_PANEL_X + 4, y, entry->name,
-                              126 - 4);
+            draw_software_field(SOFTWARE_PANEL_X + 4, y, entry->name,
+                                126 - 4, FALSE);
 
             /* Location */
-            draw_text_clipped(SOFTWARE_PANEL_X + 126, y,
-                              get_location_string(entry->location),
-                              200 - 126);
+            draw_software_field(SOFTWARE_PANEL_X + 126, y,
+                                get_location_string(entry->location),
+                                200 - 126, FALSE);
 
             /* Address */
             snprintf(buffer, 12, "$%08lX", (unsigned long)entry->address);
             SetAPen(rp, COLOR_HIGHLIGHT);
-            draw_text_clipped(SOFTWARE_PANEL_X + 200, y, buffer,
-                              284 - 200);
+            draw_software_field(SOFTWARE_PANEL_X + 200, y, buffer,
+                                284 - 200, FALSE);
 
             /* Version */
             snprintf(buffer, sizeof(buffer), "V%d.%d", entry->version, entry->revision);
-            draw_text_clipped(SOFTWARE_PANEL_X + 284, y, buffer,
-                              (SOFTWARE_PANEL_W - 16) - 284);
+            draw_software_field(SOFTWARE_PANEL_X + 284, y, buffer,
+                                (SOFTWARE_PANEL_W - 16) - 284, FALSE);
         }
 
         y += 8;
@@ -1657,11 +1813,14 @@ static void draw_speed_panel_contents(BOOL redraw_scale_button)
         if (bench_results.benchmarks_valid && reference_systems[i].dhrystones > 0) {
             ULONG factor_x100 = (bench_results.dhrystones * 100) / reference_systems[i].dhrystones;
             char factor_str[16];
-        int factor_off = 0;
-        if (factor_x100 <= 100000) factor_str[factor_off++] = ' ';
-        if (factor_x100 <= 10000) factor_str[factor_off++] = ' ';
-        if (factor_x100 <= 1000) factor_str[factor_off++] = ' ';
-            format_scaled(factor_str + factor_off, sizeof(factor_str)-factor_off, factor_x100, FALSE);
+            int factor_off = 0;
+            BOOL round_factor = (factor_x100 >= 100000);
+
+            if (factor_x100 <= 100000) factor_str[factor_off++] = ' ';
+            if (factor_x100 <= 10000) factor_str[factor_off++] = ' ';
+            if (factor_x100 <= 1000) factor_str[factor_off++] = ' ';
+            format_scaled(factor_str + factor_off, sizeof(factor_str) - factor_off,
+                          factor_x100, round_factor);
             SetAPen(rp, COLOR_HIGHLIGHT);
             TightText(rp, SPEED_PANEL_X + 125, y, (CONST_STRPTR)factor_str, -1, 7);
         }
@@ -1702,17 +1861,15 @@ static void draw_speed_panel_contents(BOOL redraw_scale_button)
     SetAPen(rp, COLOR_HIGHLIGHT);
     TightText(rp, SPEED_PANEL_X + 132, y, (CONST_STRPTR)buffer, -1, 4);
 
-    /* Memory speeds header */
-    y += 8;
-
-    SetAPen(rp, COLOR_TEXT);
-    snprintf(buffer, sizeof(buffer), "%s", get_string(MSG_MEM_SPEED_HEADER));
-    TightText(rp, SPEED_PANEL_X + 4, y, (CONST_STRPTR)buffer, -1, 4);
-
-    /* Memory speed values */
+    /* Memory speeds: labels and values share fixed column positions. */
     y += 8;
     {
         char chip_str[8], fast_str[8], rom_str[8];
+        const char *values[] = { chip_str, fast_str, rom_str };
+        char *label;
+        WORD x = SPEED_PANEL_X + 4;
+        /* Five characters at seven pixels each, plus a column gap. */
+        const WORD column_width = 42;
 
         /* Format CHIP speed in MB/s */
         if (bench_results.benchmarks_valid && bench_results.chip_speed > 0) {
@@ -1735,11 +1892,26 @@ static void draw_speed_panel_contents(BOOL redraw_scale_button)
             snprintf(rom_str, sizeof(rom_str), "%s", get_string(MSG_NA));
         }
 
-        snprintf(buffer, sizeof(buffer), "%-6s %-6s %-6s  %s",
-                 chip_str, fast_str, rom_str, get_string(MSG_MEM_SPEED_UNIT));
+        snprintf(buffer, sizeof(buffer), "%s", get_string(MSG_MEM_SPEED_HEADER));
+        label = buffer;
+        for (i = 0; i < 3; i++) {
+            char *next;
+
+            /* Catalog headers contain three space-separated labels. */
+            label += strspn(label, " ");
+            next = label + strcspn(label, " ");
+            if (*next) *next++ = '\0';
+
+            SetAPen(rp, COLOR_TEXT);
+            TightText(rp, x, y, (CONST_STRPTR)label, -1, 4);
+            SetAPen(rp, COLOR_HIGHLIGHT);
+            TightText(rp, x, y + 8, (CONST_STRPTR)values[i], -1, 4);
+            label = next;
+            x += column_width;
+        }
+        TightText(rp, x, y + 8,
+                  (CONST_STRPTR)get_string(MSG_MEM_SPEED_UNIT), -1, 4);
     }
-    SetAPen(rp, COLOR_HIGHLIGHT);
-    TightText(rp, SPEED_PANEL_X + 4, y, (CONST_STRPTR)buffer, -1, 4);
 }
 
 static void refresh_speed_panel_contents(void)
@@ -1776,9 +1948,6 @@ static void draw_speed_panel(void)
 
 static void draw_hardware_panel(void)
 {
-    WORD y;
-    char buffer[74];
-
     draw_panel(HARDWARE_PANEL_X, HARDWARE_PANEL_Y,
                HARDWARE_PANEL_W, HARDWARE_PANEL_H,
            NULL);
@@ -1791,6 +1960,14 @@ static void draw_hardware_panel(void)
     if (hw_cycle_btn) {
         draw_cycle_button(hw_cycle_btn);
     }
+
+    draw_hardware_panel_contents();
+}
+
+static void draw_hardware_panel_contents(void)
+{
+    WORD y;
+    char buffer[74];
 
     y = HARDWARE_PANEL_Y + 24;
     if (app->hardware_type == HARDWARE_STD) {
@@ -2019,6 +2196,18 @@ static void draw_hardware_panel(void)
                          HARDWARE_OVERVIEW_VALUE_OFFSET);
         y += 8;
 
+        format_size(memory_regions.total_chip_size, buffer, sizeof(buffer));
+        draw_label_value(HARDWARE_PANEL_X + 4, y,
+                         get_string(MSG_CHIP_RAM), buffer,
+                         HARDWARE_OVERVIEW_VALUE_OFFSET);
+        y += 8;
+
+        format_size(memory_regions.total_fast_size, buffer, sizeof(buffer));
+        draw_label_value(HARDWARE_PANEL_X + 4, y,
+                         get_string(MSG_FAST_RAM), buffer,
+                         HARDWARE_OVERVIEW_VALUE_OFFSET);
+        y += 8;
+
         if (strcmp(hw_info.amiga_model_string, get_string(MSG_NA)) != 0) {
             draw_label_value(HARDWARE_PANEL_X + 4, y,
                              "Amiga", hw_info.amiga_model_string,
@@ -2060,7 +2249,16 @@ static void draw_hardware_panel(void)
         format_mmu_address(buffer, sizeof(buffer), 0);
         draw_label_value(HARDWARE_PANEL_X + 4, y,
                          "Page 0", buffer, 80);
-        y += 16;
+        y += 8;
+
+        if (hw_info.ramsey_rev) {
+            if (hw_info.bus_mhz)
+                format_scaled(buffer, sizeof(buffer), hw_info.bus_mhz, TRUE);
+            else
+                copy_string(buffer, get_string(MSG_NA), sizeof(buffer));
+            draw_label_value(HARDWARE_PANEL_X + 4, y,
+                             get_string(MSG_BUS_MHZ), buffer, 80);
+        }
 
         cache_y = CACHE_LABEL_Y0;
         draw_label_value_max(HARDWARE_PANEL_X + 4, cache_y,
@@ -2126,13 +2324,13 @@ static void draw_hardware_panel(void)
             y += 8;
             switch (hw_info.ramsey_refresh_rate) {
                 case 0:
-                    copy_string(buffer, "154 clk", sizeof(buffer));
+                    copy_string(buffer, "156 clk", sizeof(buffer));
                     break;
                 case 1:
-                    copy_string(buffer, "238 clk", sizeof(buffer));
+                    copy_string(buffer, "240 clk", sizeof(buffer));
                     break;
                 case 2:
-                    copy_string(buffer, "380 clk", sizeof(buffer));
+                    copy_string(buffer, "372 clk", sizeof(buffer));
                     break;
                 default:
                     copy_string(buffer, "off", sizeof(buffer));
@@ -2299,7 +2497,7 @@ static void show_timed_overlay(const char *message, ULONG ticks)
 
     draw_3d_box(dialog_x, dialog_y, dialog_w, dialog_h, FALSE);
 
-    SetAPen(rp, COLOR_BUTTON_LIGHT);
+    SetAPen(rp, COLOR_HIGHLIGHT);
     SetBPen(rp, COLOR_BAR_YOU);
     Move(rp, dialog_x + (dialog_w - text_len * 8) / 2, dialog_y + 16);
     Text(rp, (CONST_STRPTR)message, text_len);
@@ -2356,58 +2554,54 @@ void handle_button_press(ButtonID btn_id)
 }
 
 /*
- * Handle click on scrollbar - scroll based on click position
+ * Page on trough clicks; drag only when the knob itself was grabbed.
  */
 void handle_scrollbar_click(WORD mx __attribute__((unused)), WORD my)
 {
     Button *scrollbar_btn = find_button(BTN_SOFTWARE_SCROLLBAR);
-    SoftwareList *list;
-    WORD knob_h;
-    WORD track_h;
-    LONG max_scroll;
+    SoftwareList *list = get_software_list(app->software_type);
+    WORD knob_y, knob_h, travel;
+    LONG max_scroll, new_scroll;
 
-    if (!scrollbar_btn) return;
-
-    /* Get current list */
-    switch (app->software_type) {
-        case SOFTWARE_LIBRARIES:
-            list = &libraries_list;
-            break;
-        case SOFTWARE_DEVICES:
-            list = &devices_list;
-            break;
-        case SOFTWARE_RESOURCES:
-            list = &resources_list;
-            break;
-        case SOFTWARE_MMU:
-            list = &mmu_list;
-            break;
-        default:
-            return;
-    }
+    if (app->current_view != VIEW_MAIN || !scrollbar_btn ||
+        !scrollbar_btn->enabled || !list) return;
 
     max_scroll = (LONG)list->count - SOFTWARE_LIST_LINES;
     if (max_scroll <= 0) return;
 
-    track_h = scrollbar_btn->height;
+    scrollbar_knob(scrollbar_btn->height, app->software_scroll, list->count,
+                   SOFTWARE_LIST_LINES, &knob_y, &knob_h);
+    travel = scrollbar_btn->height - 2 - knob_h;
+    if (travel <= 0) return;
 
-    /* Calculate knob size */
-    knob_h = (SOFTWARE_LIST_LINES * (track_h - 2)) / list->count;
-    if (knob_h < 8) knob_h = 8;
+    if (app->scrollbar_dragging) {
+        LONG delta = (LONG)my - app->scrollbar_drag_y;
+        LONG start_y = (app->scrollbar_drag_scroll * travel) / max_scroll;
 
-    /* When dragging, directly calculate scroll position from mouse Y */
-    /* Center the knob on the mouse position */
-    WORD rel_y = my - scrollbar_btn->y - knob_h / 2;
-    WORD travel = track_h - 2 - knob_h;
-
-    if (travel > 0) {
-        LONG new_scroll = (rel_y * max_scroll) / travel;
-        if (new_scroll < 0) new_scroll = 0;
-        if (new_scroll > max_scroll) new_scroll = max_scroll;
-        if (new_scroll != app->software_scroll) {
-            app->software_scroll = new_scroll;
-            update_software_list();
+        /* Retain the original scroll offset even when several rows share a
+         * knob pixel. A click or horizontal movement must not move the list. */
+        new_scroll = app->scrollbar_drag_scroll + (delta * max_scroll) / travel;
+        if (delta < 0 && start_y + delta <= 0) new_scroll = 0;
+        if (delta > 0 && start_y + delta >= travel) new_scroll = max_scroll;
+    } else {
+        knob_y += scrollbar_btn->y;
+        if (my < knob_y) {
+            new_scroll = app->software_scroll - SOFTWARE_LIST_LINES;
+        } else if (my >= knob_y + knob_h) {
+            new_scroll = app->software_scroll + SOFTWARE_LIST_LINES;
+        } else {
+            app->scrollbar_dragging = TRUE;
+            app->scrollbar_drag_y = my;
+            app->scrollbar_drag_scroll = app->software_scroll;
+            return;
         }
+    }
+
+    if (new_scroll < 0) new_scroll = 0;
+    if (new_scroll > max_scroll) new_scroll = max_scroll;
+    if (new_scroll != app->software_scroll) {
+        app->software_scroll = new_scroll;
+        update_software_list(FALSE);
     }
 }
 
@@ -2416,6 +2610,7 @@ void handle_scrollbar_click(WORD mx __attribute__((unused)), WORD my)
  */
 void switch_to_view(ViewMode view)
 {
+    app->scrollbar_dragging = FALSE;
     app->current_view = view;
 
     /* Reset view-specific state */
@@ -2596,7 +2791,7 @@ static void show_status_overlay_centered(const char *message,
     draw_3d_box(dialog_x, dialog_y, dialog_w, dialog_h, FALSE);
 
     /* Draw centered message */
-    SetAPen(rp, COLOR_BUTTON_LIGHT);  /* White text */
+    SetAPen(rp, COLOR_HIGHLIGHT);  /* White text in both palettes */
     SetBPen(rp, COLOR_BAR_YOU);
     TextLength(rp, (CONST_STRPTR)message, text_len);
     Move(rp, dialog_x + (dialog_w - text_len * 8) / 2, dialog_y + 16);

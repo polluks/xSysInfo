@@ -13,9 +13,12 @@
 #include <exec/libraries.h>
 #include <exec/devices.h>
 #include <exec/resident.h>
+#include <exec/semaphores.h>
+#include <libraries/identify.h>
 
 #include <proto/exec.h>
 #include <proto/mmu.h>
+#include <proto/identify.h>
 
 #include "xsysinfo.h"
 #include "software.h"
@@ -27,6 +30,7 @@ SoftwareList libraries_list;
 SoftwareList devices_list;
 SoftwareList resources_list;
 SoftwareList mmu_list;
+SystemSoftwareInfo system_software;
 
 /* External references */
 extern struct ExecBase *SysBase;
@@ -37,29 +41,34 @@ extern struct Library *MMUBase;
 extern struct DosLibrary *DOSBase;
 
 /*
- * Copy name, stripping everything after the last dot
- * e.g. "exec.library" -> "exec", "a4092.device" -> "a4092"
+ * Copy a module name, omitting a recognized file-type suffix.
+ * Preserve other dots, for example in names containing version numbers.
  */
 static void copy_base_name(char *dest, const char *src, size_t destsize)
 {
+    static const char *const suffixes[] = {
+        ".library", ".device", ".resource", ".datatype",
+        ".gadget", ".image", ".class", ".mcc", ".mcp"
+    };
     const char *dot;
-    size_t len;
+    size_t len, i;
 
-    if (!src || !dest || destsize == 0) return;
+    if (!dest || destsize == 0) return;
+    if (!src) src = "(unknown)";
 
-    /* Find last dot */
+    len = strlen(src);
     dot = strrchr(src, '.');
-
     if (dot && dot > src) {
-        /* Copy only up to the dot */
-        len = (size_t)(dot - src);
-        if (len >= destsize) len = destsize - 1;
-        strncpy(dest, src, len);
-        dest[len] = '\0';
-    } else {
-        /* No dot found, copy entire string */
-        copy_string(dest, src, destsize);
+        for (i = 0; i < sizeof(suffixes) / sizeof(suffixes[0]); i++) {
+            if (strcmp(dot, suffixes[i]) == 0) {
+                len = (size_t)(dot - src);
+                break;
+            }
+        }
     }
+    if (len >= destsize) len = destsize - 1;
+    memcpy(dest, src, len);
+    dest[len] = '\0';
 }
 
 static size_t append_format(char *buffer, size_t buffer_size, size_t pos,
@@ -155,16 +164,7 @@ void enumerate_libraries(void)
 
         entry = &libraries_list.entries[libraries_list.count];
 
-        if (lib->lib_Node.ln_Name) {
-            if (strstr(lib->lib_Node.ln_Name, ".library") != NULL) {
-                copy_base_name(entry->name, lib->lib_Node.ln_Name, sizeof(entry->name));
-            } else { /* not a ".library" */
-                copy_string(entry->name, lib->lib_Node.ln_Name,
-                            sizeof(entry->name));
-            }
-        } else {
-            copy_string(entry->name, "(unknown)", sizeof(entry->name));
-        }
+        copy_base_name(entry->name, lib->lib_Node.ln_Name, sizeof(entry->name));
 
         entry->address = (APTR)lib;
         entry->version = lib->lib_Version;
@@ -245,17 +245,8 @@ void enumerate_devices(void)
 
         SoftwareEntry *entry = &devices_list.entries[devices_list.count];
 
-        if (dev->dd_Library.lib_Node.ln_Name) {
-            if (strstr(dev->dd_Library.lib_Node.ln_Name, ".device") != NULL) {
-                copy_base_name(entry->name, dev->dd_Library.lib_Node.ln_Name,
-                               sizeof(entry->name));
-            } else { //not a ".device"
-                copy_string(entry->name, dev->dd_Library.lib_Node.ln_Name,
-                            sizeof(entry->name));
-            }
-        } else {
-            copy_string(entry->name, "(unknown)", sizeof(entry->name));
-        }
+        copy_base_name(entry->name, dev->dd_Library.lib_Node.ln_Name,
+                       sizeof(entry->name));
 
         entry->address = (APTR)dev;
         entry->version = dev->dd_Library.lib_Version;
@@ -268,6 +259,41 @@ void enumerate_devices(void)
     Permit();
 
     sort_software_list(&devices_list);
+}
+
+/*
+ * Parse the first "<major>.<minor>" pair out of a Resident's rt_IdString
+ * (the "$VER: name major.minor (date)" string). Digit runs that are not
+ * followed by ".<digit>" (e.g. numbers embedded in the module name like
+ * "a2091.device") are skipped, so the first real version.revision pair wins.
+ */
+static BOOL parse_id_version(const char *s, UWORD *ver, UWORD *rev)
+{
+    if (!s) return FALSE;
+
+    while (*s) {
+        if (*s >= '0' && *s <= '9') {
+            const char *p = s;
+            UWORD major = 0, minor = 0;
+
+            while (*p >= '0' && *p <= '9')
+                major = (UWORD)(major * 10 + (*p++ - '0'));
+
+            if (*p == '.' && p[1] >= '0' && p[1] <= '9') {
+                p++;
+                while (*p >= '0' && *p <= '9')
+                    minor = (UWORD)(minor * 10 + (*p++ - '0'));
+                *ver = major;
+                *rev = minor;
+                return TRUE;
+            }
+            s = p;
+        } else {
+            s++;
+        }
+    }
+
+    return FALSE;
 }
 
 /*
@@ -289,21 +315,35 @@ void enumerate_resources(void)
 
         SoftwareEntry *entry = &resources_list.entries[resources_list.count];
 
-        if (res->lib_Node.ln_Name) {
-            if (strstr(res->lib_Node.ln_Name, ".resource") != NULL) {
-                copy_base_name(entry->name, res->lib_Node.ln_Name,
-                               sizeof(entry->name));
-            } else { //not a ".resource"
-                copy_string(entry->name, res->lib_Node.ln_Name,
-                            sizeof(entry->name));
-            }
-        } else {
-            copy_string(entry->name, "(unknown)", sizeof(entry->name));
-        }
+        copy_base_name(entry->name, res->lib_Node.ln_Name, sizeof(entry->name));
 
         entry->address = (APTR)res;
-        entry->version = res->lib_Version;
-        entry->revision = res->lib_Revision;
+
+        /*
+         * Resource nodes are not struct Library: only the leading struct Node
+         * is guaranteed, so lib_Version/lib_Revision read whatever resource-
+         * specific data happens to sit at those offsets (see issue #51, where
+         * filesystem.resource showed "65108.0"). Take the version from the
+         * matching Resident module instead, mirroring what "version <name>"
+         * reports. Resources with no resident (e.g. the runtime-created
+         * ciaa/ciab.resource) are left at 0.0.
+         */
+        entry->version = 0;
+        entry->revision = 0;
+        if (res->lib_Node.ln_Name) {
+            struct Resident *rt =
+                FindResident((CONST_STRPTR)res->lib_Node.ln_Name);
+            if (rt) {
+                UWORD v = 0, r = 0;
+                if (parse_id_version(rt->rt_IdString, &v, &r)) {
+                    entry->version = v;
+                    entry->revision = r;
+                } else {
+                    entry->version = rt->rt_Version;
+                }
+            }
+        }
+
         entry->location = determine_mem_location(mmu_physical_address((APTR)res));
 
         resources_list.count++;
@@ -326,7 +366,7 @@ void enumerate_mmu_entries(void)
 
     //is mmu.library loaded?
     if (mmuLoaded && hw_info.mmu_enabled) {
-        //no else: iff mmu.library is in the libraries lsit, it can load!
+        //no else: iff mmu.library is in the libraries list, it can load!
         if (DOSBase && DOSBase->dl_lib.lib_Version >= 37) {
             if ((MMUBase = OpenLibrary((CONST_STRPTR)"mmu.library", 40L))) {
 
@@ -529,11 +569,92 @@ void enumerate_mmu_entries(void)
     Permit();
 }
 
+static void detect_graphics_system(void)
+{
+    const char *name;
+
+    system_software.graphics_system_id = IdentifyBase ?
+        IdHardwareNumTags(IDHW_GFXSYS, TAG_DONE) : IDGOS_AMIGAOS;
+    switch (system_software.graphics_system_id) {
+    case IDGOS_EGS:       name = "EGS"; break;
+    case IDGOS_RETINA:    name = "Retina"; break;
+    case IDGOS_GRAFFITI:  name = "Graffiti"; break;
+    case IDGOS_TIGA:      name = "TIGA"; break;
+    case IDGOS_PROBENCH:  name = "ProBench"; break;
+    case IDGOS_PICASSO:
+    case IDGOS_PICASSO96: name = "Picasso96"; break;
+    case IDGOS_CGX:       name = "CyberGraphX V2"; break;
+    case IDGOS_CGX3:      name = "CyberGraphX V3"; break;
+    case IDGOS_CGX4:      name = "CyberGraphX V4"; break;
+    default:
+        system_software.graphics_system_id = IDGOS_AMIGAOS;
+        name = get_string(MSG_NATIVE_GRAPHICS);
+        break;
+    }
+    copy_string(system_software.graphics_system, name,
+                sizeof(system_software.graphics_system));
+}
+
+void detect_system_software(void)
+{
+    /* TinySetPatch appends this record at byte 80 of its SetPatch semaphore. */
+    struct TinySetPatchInfo {
+        ULONG magic[2];
+        UWORD version;
+        UWORD revision;
+    } const volatile *tinysetpatch;
+    struct SignalSemaphore *semaphore;
+    struct Library *version_base;
+    ULONG setpatch = 0;
+    STRPTR os_name;
+
+    memset(&system_software, 0, sizeof(system_software));
+    version_base = OpenLibrary((CONST_STRPTR)"version.library", 0);
+    if (version_base) {
+        system_software.has_workbench_version = TRUE;
+        system_software.workbench_version = version_base->lib_Version;
+        system_software.workbench_revision = version_base->lib_Revision;
+        CloseLibrary(version_base);
+    }
+
+    if (IdentifyBase) {
+        system_software.os_id = IdHardwareNumTags(IDHW_OSNR, TAG_DONE);
+        os_name = IdHardwareTags(IDHW_OSNR, TAG_DONE);
+        /* Unknown IDs are described as "Bad OS" by identify.library. */
+        if (system_software.os_id != IDOS_UNKNOWN && os_name)
+            copy_string(system_software.os_name, (const char *)os_name,
+                        sizeof(system_software.os_name));
+        setpatch = IdHardwareNumTags(IDHW_SETPATCHVER, TAG_DONE);
+    }
+    if (setpatch) {
+        system_software.has_setpatch_version = TRUE;
+        system_software.setpatch_version = setpatch & 0xffff;
+        system_software.setpatch_revision = setpatch >> 16;
+        Forbid();
+        semaphore = FindSemaphore((CONST_STRPTR)"\253 SetPatch \273");
+        if (semaphore) {
+            /* Older implementations have no extension; require both magic
+             * words before interpreting the following version fields. */
+            tinysetpatch = (const volatile struct TinySetPatchInfo *)
+                ((const UBYTE *)semaphore + 80);
+            if (tinysetpatch->magic[0] == 0x54696e79UL &&
+                tinysetpatch->magic[1] == 0x53657450UL) {
+                system_software.is_tinysetpatch = TRUE;
+                system_software.tinysetpatch_version = tinysetpatch->version;
+                system_software.tinysetpatch_revision = tinysetpatch->revision;
+            }
+        }
+        Permit();
+    }
+    detect_graphics_system();
+}
+
 /*
  * Enumerate all software types
  */
 void enumerate_all_software(void)
 {
+    detect_system_software();
     enumerate_libraries();
     enumerate_devices();
     enumerate_resources();
