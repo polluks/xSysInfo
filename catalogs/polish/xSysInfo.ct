@@ -16,10 +16,10 @@ Kontakt:
 ; Section headers
 ;
 MSG_SYSTEM_SOFTWARE
-ZAINSTALOWANE OPROGRAMOWANIE
+OPROGRAMOWANIE SYSTEMOWE
 ;
 MSG_INTERNAL_HARDWARE
-INFORMACJE O SPRZECIE
+SPRZET
 ;
 MSG_SPEED_COMPARISONS
 POROWNANIA SZYBKOSCI
@@ -91,16 +91,16 @@ MSG_COMMENT
 Komentarz
 ;
 MSG_HORIZ_KHZ
-Poz. KHz
+Poz. kHz
 ;
 MSG_ECLOCK_HZ
 EClock Hz
 ;
-MSG_RAMSEY_REV
-Ramsey Rev
+MSG_RAM_CONTROLLER
+Kontr. RAM
 ;
-MSG_GARY_REV
-Gary Rev
+MSG_DECODING
+Dekodowanie
 ;
 MSG_CARD_SLOT
 Slot Karty
@@ -137,10 +137,10 @@ MSG_DHRYSTONES
 Dhrystones
 ;
 MSG_MIPS
-Mips
+MIPS
 ;
 MSG_MFLOPS
-MFlops
+MFLOPS
 ;
 MSG_MEM_SPEED_UNIT
 MB/s
@@ -171,93 +171,93 @@ Ty
 ; Memory view labels
 ;
 MSG_START_ADDRESS
-ADRES POCZATKOWY
+Adres poczatkowy
 ;
 MSG_END_ADDRESS
-ADRES KONCOWY
+Adres koncowy
 ;
 MSG_TOTAL_SIZE
-CALKOWITY ROZMIAR
+Calkowity rozmiar
 ;
 MSG_MEMORY_TYPE
-TYP PAMIECI
+Typ pamieci
 ;
 MSG_PRIORITY
-PRIORYTET
+Priorytet
 ;
 MSG_LOWER_BOUND
-DOLNA GRANICA
+Dolna granica
 ;
 MSG_UPPER_BOUND
-GORNA GRANICA
+Gorna granica
 ;
 MSG_FIRST_ADDRESS
-PIERWSZY ADRES
+Pierwszy adres
 ;
 MSG_AMOUNT_FREE
-WOLNA PAMIEC
+Wolna pamiec
 ;
 MSG_LARGEST_BLOCK
-NAJWIEKSZY BLOK
+Najwiekszy blok
 ;
 MSG_NUM_CHUNKS
-LICZBA FRAGMENTOW
+Liczba fragmentow
 ;
 MSG_NODE_NAME
-NAZWA WEZLA
+Nazwa wezla
 ;
 MSG_MEMORY_SPEED
-SZYBKOSC PAMIECI
+Szybkosc pamieci
 ;
 ; Drives view labels
 ;
 MSG_DISK_ERRORS
-LICZBA BLEDOW DYSKU
+Liczba bledow dysku
 ;
 MSG_UNIT_NUMBER
-NUMER JEDNOSTKI
+Numer jednostki
 ;
 MSG_DISK_STATE
-STAN DYSKU
+Stan dysku
 ;
 MSG_TOTAL_BLOCKS
-CALKOWITA LICZBA BLOKOW
+Calkowita liczba blokow
 ;
 MSG_BLOCKS_USED
-UZYTE BLOKI
+Uzyte bloki
 ;
 MSG_BYTES_PER_BLOCK
-BAJTOW NA BLOK
+Bajtow na blok
 ;
 MSG_DISK_TYPE
-TYP NAPEDU/DYSKU
+Typ napedu/dysku
 ;
 MSG_VOLUME_NAME
-NAZWA WOLUMENU
+Nazwa wolumenu
 ;
 MSG_DEVICE_NAME
-NAZWA URZADZENIA
+Nazwa urzadzenia
 ;
 MSG_SURFACES
-POWIERZCHNIE
+Powierzchnie
 ;
 MSG_SECTORS_PER_SIDE
-SEKTOROW NA STRONE
+Sektorow na strone
 ;
 MSG_RESERVED_BLOCKS
-ZAREZERWOWANE BLOKI
+Zarezerwowane bloki
 ;
 MSG_LOWEST_CYLINDER
-NAJNIZSZY CYLINDER
+Najnizszy cylinder
 ;
 MSG_HIGHEST_CYLINDER
-NAJWYZSZY CYLINDER
+Najwyzszy cylinder
 ;
 MSG_NUM_BUFFERS
-LICZBA BUFOROW
+Liczba buforow
 ;
 MSG_SPEED
-SZYBKOSC NAPEDU
+Szybkosc napedu
 ;
 MSG_DRIVES_NO_DRIVES_FOUND
 Nie znaleziono napedow.
@@ -338,31 +338,31 @@ MSG_NA
 N/D
 ;
 MSG_NONE
-BRAK
+Brak
 ;
 MSG_UNKNOWN
-NIEZNANY
+Nieznany
 ;
 MSG_YES
-TAK
+Tak
 ;
 MSG_NO
-NIE
+Nie
 ;
 MSG_ON
-WL
+Wl
 ;
 MSG_OFF
-WYL
+Wyl
 ;
 MSG_IN_USE
-W UZYCIU
+W uzyciu
 ;
 MSG_CLOCK_FOUND
-ZEGAR ZNALEZIONY
+Zegar znaleziony
 ;
 MSG_CLOCK_NOT_FOUND
-NIE ZNALEZIONO
+Nie znaleziono
 ;
 MSG_DISK_OK
 Dysk OK, Odczyt/Zapis
@@ -387,47 +387,47 @@ PCMCIA
 ; Zorro types
 ;
 MSG_ZORRO_II
-ZORRO II
+Zorro II
 ;
 MSG_ZORRO_III
-ZORRO III
+Zorro III
 ;
 ; Memory types
 ;
 MSG_CHIP_RAM
-CHIP RAM
+Chip RAM
 ;
 MSG_FAST_RAM
-FAST RAM
+Fast RAM
 ;
 MSG_SLOW_RAM
-SLOW RAM
+Slow RAM
 ;
 MSG_ROM
 ROM
 ;
 MSG_24BIT_RAM
-24BIT RAM
+24-bit RAM
 ;
 MSG_32BIT_RAM
-32BIT RAM
+32-bit RAM
 ;
 MSG_MEM_SPEED_HEADER
-CHIP  FAST  ROM
+Chip  Fast  ROM
 ;
 ; SCSI Types
 ;
 MSG_SCSI_TYPE_DISK
-DYSK
+Dysk
 ;
 MSG_SCSI_TYPE_TAPE
-TASMA
+Tasma
 ;
 MSG_SCSI_TYPE_PRINTER
-DRUKARKA
+Drukarka
 ;
 MSG_SCSI_TYPE_PROCESSOR
-PROCESOR
+Procesor
 ;
 MSG_SCSI_TYPE_WORM
 WORM
@@ -436,16 +436,16 @@ MSG_SCSI_TYPE_CDROM
 CD
 ;
 MSG_SCSI_TYPE_SCANNER
-SKANER
+Skaner
 ;
 MSG_SCSI_TYPE_OPTICAL
-OPTYCZNY
+Optyczny
 ;
 MSG_SCSI_TYPE_CHANGER
-ZMIENIARKA
+Zmieniarka
 ;
 MSG_SCSI_TYPE_COMM
-KOMUN
+Komun
 ;
 ; SCSI Versions
 ;
@@ -612,28 +612,25 @@ MSG_RAMSEY_REFRESH
 Odswiezanie
 ;
 MSG_1M
-Kosci 1M
+Ko¶ci 1Mx4
 ;
 MSG_256K
-Kosci 256K
+Ko¶ci 256Kx4
 ;
 MSG_GARY_A1000
 A1000
 ;
 MSG_GARY_A500
-GARY
+Gary
 ;
 MSG_GAYLE
-GAYLE
+Gayle
 ;
 MSG_FAT_GARY
-FAT GARY
+Fat Gary
 ;
 MSG_GARY_UNKNOWN
-NIEZNANY
-;
-MSG_EXT_INFO
-Rozsz. info A3000/4000
+Nieznany
 ;
 MSG_NV_RAM
 NV-RAM (BattMem):
@@ -654,25 +651,25 @@ MSG_SYNC_TRANS
 Sync
 ;
 MSG_FAST_SYNC
-Fast Sync
+Fast sync
 ;
 MSG_QUEUING
 Kolejkowanie
 ;
 MSG_SCSI_HOST_ID
-SCSI_ID
+SCSI ID
 ;
 MSG_LONG
-DLUGI
+Dlugi
 ;
 MSG_SHORT
-KROTKI
+Krotki
 ;
 MSG_NCR_53C710
 NCR 53C710
 ;
 MSG_SDMAC
-SDMAC
+Super DMAC
 ;
 MSG_MSM6242B
 OKI MSM6242B
@@ -717,16 +714,16 @@ MSG_AGNUS_ALICE_NTSC
 Alice 8374
 ;
 MSG_AGNUS_ECS_2MB_PAL
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_2MB_NTSC
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_B_PAL
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_B_NTSC
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_PAL
 FatAgnus 8372 (ECS)
@@ -783,7 +780,7 @@ MSG_MMU_FLAGS7_HINT
 IND=Posrednie +=wiecej flag
 ;
 MSG_SLOT_ZORRO
-ZORRO
+Zorro
 ;
 MSG_SOFTWARE_OVERVIEW
 PRZEGL¡D
@@ -822,4 +819,262 @@ Nieznany OS
 ;
 MSG_BUS_MHZ
 Bus MHz
+;
+;
+; Hardware clock page
+;
+MSG_HARDWARE_CLOCK
+ZEGAR
+;
+MSG_RTC_DATE
+Data RTC
+;
+MSG_RTC_TIME
+Czas RTC
+;
+MSG_NCR_53C770
+NCR 53C770
+;
+; Cache toggle button labels
+;
+MSG_BTN_ON
+WL
+;
+MSG_BTN_OFF
+WYL
+;
+; Ramsey RAM geometry
+MSG_1MX1
+Ko¶ci 1Mx1
+;
+; DMA and SCSI controller details
+MSG_DMA_CHIP
+Uk³ad DMA
+;
+MSG_DMA_VERSION
+Firmware
+;
+MSG_RESDMAC
+ReSDMAC
+;
+MSG_WD33C93_FAMILY
+Rodzina WD33C93
+;
+; Optional WD SCSI check
+MSG_WD33C93
+WD33C93
+;
+MSG_WD33C93A
+WD33C93A
+;
+MSG_WD33C93B
+WD33C93B
+;
+MSG_WD_MICROCODE
+Mikrokod
+;
+MSG_WD_CLOCK
+Zegar SCSI
+;
+MSG_WD_MODE
+Tryb I/O
+;
+MSG_WD_SYNC_OFFSET
+Sync / offset
+;
+MSG_WD_POLLED
+Odpytywanie
+;
+MSG_WD_BUS
+Magistrala WD
+;
+MSG_WD_ASYNC
+Asynchroniczny
+;
+MSG_WD_BUSY
+Kontroler SCSI zajêty; sprawdzenie pominiête.
+;
+MSG_WD_UNAVAILABLE
+Sprawdzenie WD niedostêpne dla tej konfiguracji.
+;
+MSG_WD_CLOCK_FAILED
+Nie mo¿na zmierzyæ zegara WD.
+;
+MSG_WD_RESTORE_FAILED
+B³±d przywracania WD. Zrestartuj przed u¿yciem dysku.
+;
+MSG_WD_FAILED
+Sprawdzenie WD nieudane; kontroler przywrócony.
+;
+; NCR SCSI configuration snapshot
+MSG_DMA_INTEGRATED
+Zintegrowany
+;
+MSG_NCR_DMA_BURST
+Seria DMA
+;
+MSG_NCR_TRANSFERS
+%u transferów
+;
+MSG_NCR_WIDTH
+Szer. danych
+;
+MSG_NCR_PARITY
+Parzysto¶æ
+;
+MSG_NCR_DOUBLER
+Podw. zegara
+;
+;
+; Additional hardware details
+MSG_CHIP_ID
+ID uk³adu
+;
+MSG_PCMCIA_CARD
+Karta PCMCIA
+;
+MSG_PCMCIA_SLOT
+Slot PCMCIA
+;
+MSG_PCMCIA_ACCESS
+Czas dostêpu
+;
+MSG_AKIKO_C2P
+C2P (OS)
+;
+MSG_PPC_REVISION
+Rewizja PPC
+;
+MSG_PPC_BUS
+Szyna PPC MHz
+;
+MSG_PPC_RUNTIME
+System PPC
+;
+MSG_HARDWARE_SCSI
+SCSI
+;
+; General titles, actions and list headings
+MSG_SOFTWARE_TITLE
+Oprogramowanie
+;
+MSG_HARDWARE_TITLE
+Sprzêt
+;
+MSG_CHIPSET_TITLE
+Chipset
+;
+MSG_SPEED_TITLE
+Szybko¶æ
+;
+MSG_MEMORY_TITLE
+Pamiêæ
+;
+MSG_DRIVES_TITLE
+Napêdy
+;
+MSG_BOARDS_TITLE
+Karty
+;
+MSG_PROJECT_MENU
+Projekt
+;
+MSG_ABOUT
+O programie...
+;
+MSG_ABOUT_MUI
+O MUI...
+;
+MSG_RUN_BENCHMARKS
+Uruchom testy
+;
+MSG_SAVE_REPORT
+Zapisz raport...
+;
+MSG_QUIT
+Zakoñcz
+;
+MSG_SETTINGS_MENU
+Ustawienia
+;
+MSG_MUI_SETTINGS
+MUI...
+;
+MSG_MEASURE_SPEED
+Zmierz szybko¶æ
+;
+MSG_SCSI_DEVICES
+Urz±dzenia SCSI...
+;
+MSG_CLOSE
+Zamknij
+;
+MSG_RESULTS_TITLE
+Wyniki
+;
+MSG_NAME
+Nazwa
+;
+MSG_LOCATION
+Lokalizacja
+;
+MSG_ADDRESS
+Adres
+;
+MSG_VERSION
+Wersja
+;
+MSG_SIZE
+Rozmiar
+;
+MSG_DRIVE
+Napêd
+;
+MSG_VOLUME
+Wolumen
+;
+MSG_REPORT_SAVED
+Raport zapisano w %s
+;
+MSG_REPORT_SAVE_FAILED
+Nie mo¿na zapisaæ raportu
+;
+MSG_FONT_INVALID
+B³êdna opcja FONT. U¿yj FONT=nazwa.rozmiar.
+;
+MSG_FONT_UNAVAILABLE
+Nie mo¿na otworzyæ wybranej czcionki.
+;
+MSG_FONT_TOO_LARGE
+Czcionka przekracza limit 8 x 8 pikseli.
+;
+MSG_FONT_FALLBACK
+U¿yto topaz.8.
+;
+MSG_ECLOCK
+EClock
+;
+MSG_REPORT_OPEN
+Raport...
+;
+MSG_REPORT_TITLE
+Raport systemowy
+;
+MSG_REPORT_WHICH
+WhichAmiga
+;
+MSG_REPORT_BRIEF
+Krótki
+;
+MSG_REPORT_FULL
+Pe³ny
+;
+MSG_REPORT_SAVE_AS
+Zapisz jako...
+;
+MSG_REPORT_FAILED
+Nie mo¿na utworzyæ podgl±du raportu
+;
+MSG_BTN_REPORT
+RAPORT
 ;

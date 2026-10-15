@@ -9,6 +9,7 @@
 #include <stdio.h>
 
 #include <exec/execbase.h>
+#include <exec/memory.h>
 #include <graphics/gfxbase.h>
 #include <hardware/cia.h>
 #include <hardware/custom.h>
@@ -28,12 +29,14 @@
 
 #include "xsysinfo.h"
 #include "hardware.h"
+#include "wdprobe.h"
 #include "locale_str.h"
 #include "debug.h"
 #include "cpu.h" //for cpu-type/rev
 #include "cache.h"
 #include "benchmark.h" //for frequencies
 #include "berr_trap.h"
+#include "rom.h"
 
 typedef struct DeviceTreeProperty {
     struct DeviceTreeProperty *next;
@@ -64,6 +67,8 @@ struct Library *MMUBase;
 extern struct ExecBase *SysBase;
 extern struct GfxBase *GfxBase;
 
+static void probe_agnus_alias(void);
+
 /*
  * Main hardware detection function
  */
@@ -82,6 +87,7 @@ BOOL detect_hardware(void)
     else {
         debug("  hw: Emu68-System detected...\n");
     }
+    detect_ppc();
     debug("  hw: Detecting FPU...\n");
     detect_fpu();
     debug("  hw: Detecting MMU...\n");
@@ -97,6 +103,8 @@ BOOL detect_hardware(void)
     detect_native_graphics();
     debug("  hw: Detecting system chips...\n");
     detect_system_chips();
+    if (g_debug_enabled)
+        probe_agnus_alias();
     debug("  hw: Detecting clock...\n");
     detect_clock();
     debug("  hw: Detecting batt mem resources...\n");
@@ -135,15 +143,9 @@ void detect_kickstart(void)
         hw_info.kickstart_revision = SysBase->SoftVer;
     }
 
-    /* Get ROM size*/
-    UWORD kick_size = *((volatile UWORD *)0xF80000);
-    if (kick_size == 0x1111) {
-        hw_info.kickstart_size = 256;
-    }
-    else {
-        /* Fallback: default to 512K */
-        hw_info.kickstart_size = 512;
-    }
+    hw_info.kickstart_size = detect_rom_size(
+        hw_info.amiga_model_id == IDSYS_AMIGA1200,
+        hw_info.gary_type == FAT_GARY);
 
     //save SysBase-Version in case we are softkicking
     hw_info.kickstart_patch_version = SysBase->LibNode.lib_Version;
@@ -310,6 +312,29 @@ BOOL detect_emu68_systems(void)
 }
 
 
+/* Distinguish a full 020 from an EC020 using RAM beyond 24-bit addressing.
+ * Trust Exec's memory map, including regions that are currently all in use;
+ * do not probe unallocated addresses or write to possible memory aliases. */
+static BOOL has_32bit_ram(void)
+{
+    struct MemHeader *mh;
+    BOOL found = FALSE;
+
+    Forbid();
+    for (mh = (struct MemHeader *)SysBase->MemList.lh_Head;
+         (struct Node *)mh != (struct Node *)&SysBase->MemList.lh_Tail;
+         mh = (struct MemHeader *)mh->mh_Node.ln_Succ) {
+        /* mh_Upper is exclusive. Also accept a region crossing 16 MiB. */
+        if ((ULONG)mh->mh_Upper > 0x01000000UL &&
+            (ULONG)mh->mh_Lower < (ULONG)mh->mh_Upper) {
+            found = TRUE;
+            break;
+        }
+    }
+    Permit();
+    return found;
+}
+
 /*
  * Detect CPU type and speed
  */
@@ -353,8 +378,11 @@ void detect_cpu(void)
             SetCacheBits(oldBits & CACRF_IBE, CACRF_IBE); // reset to old state
             if ((newBits & CACRF_IBE) == 0)
             {
-                // no 68030
-                if (*((volatile UWORD *)KICK_VERSION) == *((volatile UWORD *)KICK_VERSION_MIRR))
+                /* ROM decoding can mirror on a full 020 too. Registered
+                 * 32-bit RAM takes precedence over the mirror heuristic. */
+                if (!has_32bit_ram() &&
+                    *((volatile UWORD *)KICK_VERSION) ==
+                    *((volatile UWORD *)KICK_VERSION_MIRR))
                 { // do we have 24bit mirroring?
                     snprintf(hw_info.cpu_string, sizeof(hw_info.cpu_string), "68EC020");
                     hw_info.cpu_type = CPU_68EC020;
@@ -541,6 +569,21 @@ void detect_fpu(void)
 
 }
 
+/* MMULib checks this same marker before loading its CPU support. */
+struct Library *open_mmu_library(void)
+{
+    BOOL patched;
+
+    Forbid();
+    patched = FindSemaphore((CONST_STRPTR)"\253 SetPatch \273") != NULL;
+    Permit();
+    if (!patched) {
+        debug("    MMU: skipping mmu.library, SetPatch marker missing\n");
+        return NULL;
+    }
+    return OpenLibrary((CONST_STRPTR)"mmu.library", 40L);
+}
+
 /*
  * Detect MMU type
  */
@@ -552,16 +595,22 @@ void detect_mmu(void)
     BOOL fallBack = TRUE;
 
     // default
-    hw_info.mmu_enabled = FALSE;
+    hw_info.mmu_present = FALSE;
+    hw_info.mmu_translation = MMU_TRANSLATION_UNKNOWN;
     hw_info.mmu_type = MMU_NONE;
     copy_string(hw_info.mmu_string, get_string(MSG_NA),
                 sizeof(hw_info.mmu_string));
 
     // first: try mmu.lib
-    if ((MMUBase = (struct Library *)OpenLibrary((CONST_STRPTR)"mmu.library", 40L)))
+    if ((MMUBase = open_mmu_library()))
     { // check for mmu.lib
+            ULONG library_mmu_type = (UBYTE)GetMMUType();
+            debug("    MMU: mmu.library %lu.%lu returned type $%02lx\n",
+                  (ULONG)MMUBase->lib_Version,
+                  (ULONG)MMUBase->lib_Revision, library_mmu_type);
+
             fallBack = FALSE;
-            switch (GetMMUType())
+            switch (library_mmu_type)
             {
             case MUTYPE_68851:
                 if (hw_info.cpu_type == CPU_68030) {
@@ -573,19 +622,19 @@ void detect_mmu(void)
                     copy_string(hw_info.mmu_string, "68851",
                                 sizeof(hw_info.mmu_string));
                 }
-                hw_info.mmu_enabled = TRUE;
+                hw_info.mmu_present = TRUE;
                 break;
             case MUTYPE_68030:
                 hw_info.mmu_type = MMU_68030;
                 copy_string(hw_info.mmu_string, "68030",
                             sizeof(hw_info.mmu_string));
-                hw_info.mmu_enabled = TRUE;
+                hw_info.mmu_present = TRUE;
                 break;
             case MUTYPE_68040:
                 hw_info.mmu_type = MMU_68040;
                 copy_string(hw_info.mmu_string, "68040",
                             sizeof(hw_info.mmu_string));
-                hw_info.mmu_enabled = TRUE;
+                hw_info.mmu_present = TRUE;
                 break;
             case MUTYPE_68060:
                 hw_info.mmu_type = hw_info.cpu_type == CPU_68080 ?
@@ -593,7 +642,7 @@ void detect_mmu(void)
                 copy_string(hw_info.mmu_string,
                             hw_info.cpu_type == CPU_68080 ? "68080" : "68060",
                             sizeof(hw_info.mmu_string));
-                hw_info.mmu_enabled = TRUE;
+                hw_info.mmu_present = TRUE;
                 break;
             case MUTYPE_NONE:
                 switch (hw_info.cpu_type) // correct cpu-type to ec for relevant cpus
@@ -603,6 +652,11 @@ void detect_mmu(void)
                     snprintf(hw_info.cpu_string, sizeof(hw_info.cpu_string), "68EC030");
                     break;
                 case CPU_68040:
+                    /* Emulators can provide a 040 FPU without an MMU. */
+                    if (hw_info.fpu_type != FPU_NONE &&
+                        hw_info.fpu_type != FPU_UNKNOWN)
+                        break;
+                    /* Fall through. */
                 case CPU_68LC040:
                     hw_info.cpu_type = CPU_68EC040;
                     snprintf(hw_info.cpu_string, sizeof(hw_info.cpu_string), "68EC040");
@@ -665,12 +719,14 @@ void detect_mmu(void)
         if (cpuType >= ASM_CPU_68020 && cpuType != ASM_CPU_68080)
         {
             mmuResult = GetMMU(cpuType);
+            debug("    MMU: fallback probe CPU %lu, AttnFlags=$%04lx, result=%lu\n",
+                  cpuType, (ULONG)SysBase->AttnFlags, mmuResult);
         }
 
         if (mmuResult > 0)
         {
             // we have an mmu!
-            hw_info.mmu_enabled = TRUE;
+            hw_info.mmu_present = TRUE;
             switch (hw_info.cpu_type)
             {
             case CPU_68EC020:
@@ -714,6 +770,11 @@ void detect_mmu(void)
                 snprintf(hw_info.cpu_string, sizeof(hw_info.cpu_string), "68EC030");
                 break;
             case CPU_68040:
+                /* Emulators can provide a 040 FPU without an MMU. */
+                if (hw_info.fpu_type != FPU_NONE &&
+                    hw_info.fpu_type != FPU_UNKNOWN)
+                    break;
+                /* Fall through. */
             case CPU_68LC040:
                 hw_info.cpu_type = CPU_68EC040;
                 snprintf(hw_info.cpu_string, sizeof(hw_info.cpu_string), "68EC040");
@@ -728,6 +789,27 @@ void detect_mmu(void)
             }
         }
     }
+
+    /* Presence is also used by calibration and MMULib queries. Do not
+     * change those decisions when reporting whether translation is on.
+     * Apollo/Emu68 do not implement the classic MMU register interface.
+     */
+    if (hw_info.mmu_present && hw_info.cpu_type != CPU_68080 &&
+        hw_info.cpu_type != CPU_EMU) {
+        switch (hw_info.mmu_type) {
+        case MMU_68851: cpuType = ASM_CPU_68020; break;
+        case MMU_68030: cpuType = ASM_CPU_68030; break;
+        case MMU_68040: cpuType = ASM_CPU_68040; break;
+        case MMU_68060: cpuType = ASM_CPU_68060; break;
+        default: cpuType = 0; break;
+        }
+        if (cpuType)
+            hw_info.mmu_translation = GetMMUTranslation(cpuType);
+    }
+    if (!hw_info.mmu_present && hw_info.mmu_type == MMU_NONE)
+        hw_info.mmu_translation = MMU_TRANSLATION_DISABLED;
+    debug("    MMU: present=%lu, paged translation=%ld (-1 unknown)\n",
+          (ULONG)hw_info.mmu_present, (LONG)hw_info.mmu_translation);
 }
 
 /*
@@ -751,10 +833,10 @@ void load_mmu_remap_table(void)
 
     remap_count = 0;
 
-    if (!hw_info.mmu_enabled)
+    if (!hw_info.mmu_present)
         return;
 
-    MMUBase = (struct Library *)OpenLibrary((CONST_STRPTR)"mmu.library", 40L);
+    MMUBase = open_mmu_library();
     if (!MMUBase)
         return;
 
@@ -886,32 +968,31 @@ void detect_chipset(void)
 
 
         switch (hw_info.agnus_rev) {
-            case 0x0: //OCS PAL
+            case 0x00:
+            case 0x10: {
+                /* OCS timing is fixed. graphics.library determines PAL/NTSC
+                 * from the beam timing, covering A1000s whose VPOSR ID
+                 * disagrees with their video standard.
+                 * ECS upgrades must keep using their own ID below. */
+                BOOL is_pal = (GfxBase->DisplayFlags & PAL) != 0;
+
                 //get possible mirrored version (A1000)
                 tmp = *((volatile UWORD *)(CUSTOM_AGNUS_ID_MIRR));
                 tmp &= 0X7F00; //mask Bit 14-8
                 tmp = (tmp>>8); //shift to lower byte
-                debug("    chipset: OCS Agnus rev=$%02lx mirror=$%02lx\n",
-                      (ULONG)hw_info.agnus_rev, (ULONG)tmp);
+                debug("    chipset: OCS Agnus rev=$%02lx mirror=$%02lx "
+                      "DisplayFlags=$%04lx\n",
+                      (ULONG)hw_info.agnus_rev, (ULONG)tmp,
+                      (ULONG)GfxBase->DisplayFlags);
                 if (hw_info.agnus_rev == tmp)
-                    hw_info.agnus_type = AGNUS_OCS_PAL;
+                    hw_info.agnus_type = is_pal ?
+                        AGNUS_OCS_PAL : AGNUS_OCS_NTSC;
                 else
-                    hw_info.agnus_type = AGNUS_OCS_FAT_PAL;
+                    hw_info.agnus_type = is_pal ?
+                        AGNUS_OCS_FAT_PAL : AGNUS_OCS_FAT_NTSC;
                 hw_info.max_chip_ram = 512 * 1024;  /* 512K */
                 break;
-            case 0x10: //OCS NTSC
-                //get possible mirrored version (A1000)
-                tmp = *((volatile UWORD *)(CUSTOM_AGNUS_ID_MIRR));
-                tmp &= 0X7F00; //mask Bit 14-8
-                tmp = (tmp>>8); //shift to lower byte
-                debug("    chipset: OCS Agnus rev=$%02lx mirror=$%02lx\n",
-                      (ULONG)hw_info.agnus_rev, (ULONG)tmp);
-                if (hw_info.agnus_rev == tmp)
-                    hw_info.agnus_type = AGNUS_OCS_NTSC;
-                else
-                    hw_info.agnus_type = AGNUS_OCS_FAT_NTSC;
-                hw_info.max_chip_ram = 512 * 1024;  /* 512K */
-                break;
+            }
             case 0x20: //ECS PAL rev 4
             case 0x21: //ECS PAL rev 5
                 hw_info.agnus_type = AGNUS_ECS_PAL;
@@ -939,6 +1020,133 @@ void detect_chipset(void)
                 hw_info.max_chip_ram = 512 * 1024;  /* 512K */
                 break;
         }
+    }
+}
+
+/*
+ * Experimental ECS address-decoding check, reported only in DEBUG output.
+ * A 1 MB Agnus may mirror the lower megabyte into the upper one. This
+ * measures that alias, not the chip's part number or installed RAM size.
+ *
+ * Use an owned buffer instead of WhichAmiga's writes to addresses 0/4.
+ * Restricting the probe to a plain 68000 avoids CPU caches and MMU
+ * translations of either address. A missing mmu.library or remap-table
+ * entry would not establish that on an accelerator. Do not disable an MMU
+ * to perform this diagnostic.
+ */
+static void probe_agnus_alias(void)
+{
+    static const UBYTE pattern[8] = {
+        0x3c, 0xa5, 0x96, 0x69, 0x5a, 0xc3, 0x87, 0x78
+    };
+    volatile UBYTE *buffer;
+    ULONG address;
+    UBYTE samples[2][sizeof(pattern)];
+    ULONG pass, i, matches = 0;
+    BOOL fault = FALSE, changed = FALSE;
+
+    switch (hw_info.agnus_type) {
+        case AGNUS_ECS_PAL:
+        case AGNUS_ECS_NTSC:
+        case AGNUS_ECS_B_PAL:
+        case AGNUS_ECS_B_NTSC:
+        case AGNUS_ECS_2MB_PAL:
+        case AGNUS_ECS_2MB_NTSC:
+            break;
+        default:
+            return;
+    }
+
+    if (hw_info.cpu_type != CPU_68000 || hw_info.mmu_type != MMU_NONE) {
+        debug("    Agnus alias: skipped (probe requires a plain 68000)\n");
+        return;
+    }
+
+    buffer = AllocMem(sizeof(pattern), MEMF_CHIP);
+    if (!buffer) {
+        debug("    Agnus alias: inconclusive (no Chip RAM buffer)\n");
+        return;
+    }
+    address = (ULONG)buffer;
+    /* Exclude the first 32 KB and keep the entire buffer below 1 MB. */
+    if (address < 0x8000 || address > 0x100000 - sizeof(pattern)) {
+        debug("    Agnus alias: skipped (buffer $%08lx outside probe range)\n",
+              address);
+        FreeMem((APTR)buffer, sizeof(pattern));
+        return;
+    }
+
+    debug("    Agnus alias: buffer $%08lx, reading $%08lx\n",
+          address, address + 0x100000);
+    for (pass = 0; pass < 2; pass++) {
+        BOOL match = TRUE;
+        UBYTE mask = pass ? 0xff : 0;
+
+        /* No OS calls that can wait while the exception vectors are hooked. */
+        Disable();
+        for (i = 0; i < sizeof(pattern); i++)
+            buffer[i] = pattern[i] ^ mask;
+        for (i = 0; i < sizeof(pattern); i++) {
+            if (berr_probe_byte(address + 0x100000 + i,
+                                &samples[pass][i]) != 0) {
+                fault = TRUE;
+                break;
+            }
+            if (samples[pass][i] != (UBYTE)(pattern[i] ^ mask))
+                match = FALSE;
+        }
+        for (i = 0; i < sizeof(pattern); i++) {
+            if (buffer[i] != (UBYTE)(pattern[i] ^ mask))
+                changed = TRUE;
+        }
+        Enable();
+
+        if (fault || changed)
+            break;
+        if (match)
+            matches++;
+        debug("    Agnus alias: pass %lu%s, upper bytes", pass + 1,
+              pass ? " (inverted pattern)" : "");
+        for (i = 0; i < sizeof(pattern); i++)
+            debug(" %02lx", (ULONG)samples[pass][i]);
+        debug("\n");
+    }
+    FreeMem((APTR)buffer, sizeof(pattern));
+
+    if (fault)
+        debug("    Agnus alias: inconclusive (upper address faulted)\n");
+    else if (changed)
+        debug("    Agnus alias: inconclusive (buffer verification failed)\n");
+    else if (matches == 2)
+        debug("    Agnus alias: mirrored with both patterns\n");
+    else if (matches == 0)
+        debug("    Agnus alias: no mirror observed with either pattern\n");
+    else
+        debug("    Agnus alias: inconclusive (patterns disagree)\n");
+}
+
+/* Only access these registers on positively identified hardware. The ID
+ * and PCMCIA status/configuration reads do not acknowledge interrupts. */
+static void detect_additional_chips(void)
+{
+    if (hw_info.gary_type == GAYLE &&
+        (hw_info.gary_rev == 0xd0 || hw_info.gary_rev == 0xd1)) {
+        hw_info.gayle_pcmcia_status = *(volatile UBYTE *)0xda8000;
+        hw_info.gayle_pcmcia_config = *(volatile UBYTE *)0xdab000;
+        hw_info.gayle_pcmcia_valid = TRUE;
+        debug("    Gayle: ID $%02lx, PCMCIA status $%02lx, config $%02lx\n",
+              (ULONG)hw_info.gary_rev, (ULONG)hw_info.gayle_pcmcia_status,
+              (ULONG)hw_info.gayle_pcmcia_config);
+    }
+    if (hw_info.amiga_model_id == IDSYS_CD32 ||
+        (GfxBase->LibNode.lib_Version >= 40 &&
+         (ULONG)GfxBase->ChunkyToPlanarPtr == 0xb80038)) {
+        hw_info.akiko_id = *(volatile ULONG *)0xb80000;
+        hw_info.akiko_present = (hw_info.akiko_id & 0xffff) == 0xcafe;
+        hw_info.akiko_c2p_enabled = GfxBase->LibNode.lib_Version >= 40 &&
+                                   (ULONG)GfxBase->ChunkyToPlanarPtr == 0xb80038;
+        debug("    Akiko: ID $%08lx, graphics C2P %ld\n",
+              hw_info.akiko_id, (LONG)hw_info.akiko_c2p_enabled);
     }
 }
 
@@ -1006,7 +1214,7 @@ void detect_clock(void)
     // A Spirit Insider 1000 maps an MK48T02 TimeKeeper with its clock
     // registers on odd bytes at $DC0FF1..$DC0FFF.  Probe under bus-error
     // protection so we don't crash on machines without the card.
-    // Only plain 68000 is supported here (VBR=0 and simple group-0 frame).
+    // Keep the optional A1000 clock probe restricted to unaccelerated CPUs.
     if (hw_info.gary_type == GARY_A1000 && hw_info.cpu_type == CPU_68000) {
         UBYTE sec = 0, min = 0, hour = 0, day = 0, date = 0, mon = 0;
         if (berr_probe_byte(0xDC0FF3, &sec) == 0 &&
@@ -1048,12 +1256,18 @@ void detect_clock(void)
  */
 void detect_batt_mem(void)
 {
+    /* The OKI MSM6242 has no user RAM. A resource alone does not prove
+     * that the detected RTC provides battery-backed configuration RAM. */
+    hw_info.battMemData.available = FALSE;
     hw_info.battMemData.valid_data = FALSE;
 
-    if ( hw_info.clock_type == CLOCK_RP5C01 //clock with NV-ram
-        && hw_info.ramsey_rev > 0 //we have a ramsey (and might be a A3000
-        && openBattMem() //batt mem resource is open
-        ) {
+    if (hw_info.clock_type != CLOCK_RP5C01 &&
+        hw_info.clock_type != CLOCK_MK48T02)
+        return;
+
+    hw_info.battMemData.available = openBattMem();
+
+    if (hw_info.battMemData.available) {
         hw_info.battMemData.valid_data = readBattMem(&hw_info.battMemData);
     }
 
@@ -1103,67 +1317,162 @@ void detect_ramsey(void)
         hw_info.ramsey_page_enabled = hw_info.ramsey_ctl & RAMSEY_PAGE_MODE;
         hw_info.ramsey_burst_enabled = hw_info.ramsey_ctl & RAMSEY_BURST_MODE;
         hw_info.ramsey_wrap_enabled = hw_info.ramsey_ctl & RAMSEY_WRAP_MODE;
-        hw_info.ramsey_size_1M = hw_info.ramsey_ctl & RAMSEY_SIZE;
-        hw_info.ramsey_skip_enabled = hw_info.ramsey_ctl & RAMSEY_SKIP_MODE;
+        /* On Ramsey 04, bit 4 selects RAM width, not skip mode. */
+        hw_info.ramsey_skip_enabled = hw_info.ramsey_rev == 0x0f &&
+                                     (hw_info.ramsey_ctl & RAMSEY_SKIP_MODE);
         hw_info.ramsey_refresh_rate = (hw_info.ramsey_ctl & RAMSEY_REFRESH_MODE)>>5;
     }
 }
 
-/*
- * Detect SDMAC
- */
-/* Returns 2 for SDMAC-02, 4 for SDMAC-04/ReSDMAC, 0 if not present/detection fails */
+const char *get_ramsey_size_string(void)
+{
+    if (hw_info.ramsey_ctl & RAMSEY_SIZE)
+        return get_string(MSG_1M);
+    if (hw_info.ramsey_rev == 0x0d &&
+        !(hw_info.ramsey_ctl & RAMSEY_SKIP_MODE))
+        return get_string(MSG_1MX1);
+    return get_string(MSG_256K);
+}
+
+/* Read-only 53C770 probe, following ncr7xx's stable register signature. */
+static BOOL detect_ncr53c770(unsigned char *revision)
+{
+    uint8_t prev_gpcntl = 0xff, prev_macntl = 0xff, prev_ctest3 = 0xff;
+    BOOL prev_valid = FALSE;
+    int attempt;
+
+    for (attempt = 0; attempt < 4; attempt++) {
+        UBYTE gpcntl, macntl, ctest3;
+        BOOL valid;
+
+        if (berr_probe_byte(NCR770_GPCNTL_REG, &gpcntl) ||
+            berr_probe_byte(NCR770_MACNTL_REG, &macntl) ||
+            berr_probe_byte(NCR770_CTEST3_REG, &ctest3))
+            return FALSE;
+
+        /* GPIO0-3 inputs, GPIO4 output; MACNTL chip type 2 is 53C770. */
+        valid = ((gpcntl & 0x1f) == 0x0f) && ((macntl >> 4) == 2);
+        debug("    ncr770: GPCNTL=%02x MACNTL=%02x CTEST3=%02x candidate=%d\n",
+              gpcntl, macntl, ctest3, valid);
+        if (valid && prev_valid && gpcntl == prev_gpcntl &&
+            macntl == prev_macntl && ctest3 == prev_ctest3) {
+            *revision = ctest3 >> 4;
+            return TRUE;
+        }
+        prev_gpcntl = gpcntl;
+        prev_macntl = macntl;
+        prev_ctest3 = ctest3;
+        prev_valid = valid;
+        if (attempt < 3)
+            Delay(1);
+    }
+    return FALSE;
+}
+
+/* Snapshot configuration only: no FIFO/status reads or controller writes.
+ * Offsets use the big-endian register maps. The 710 bank is at $DD0040,
+ * while the 770 bank is at $DD0000. This deliberately does not gate on
+ * SCRIPTS execution; values describe the configuration at detection time. */
+static void read_ncr_config(void)
+{
+    static const UBYTE offsets[] = {0x07, 0x06, 0x03, 0x02, 0x3b, 0x00, 0x4e};
+    UBYTE values[7] = {0};
+    BOOL wide = hw_info.ncr_type == NCR_53C770;
+    ULONG base = wide ? 0xdd0000 : 0xdd0040;
+    unsigned i;
+
+    for (i = 0; i < (wide ? 7 : 5); i++) {
+        if (berr_probe_byte(base + offsets[i], &values[i]))
+            return;
+    }
+    hw_info.ncr_config.scid = values[0];
+    hw_info.ncr_config.sxfer = values[1];
+    hw_info.ncr_config.scntl0 = values[2];
+    hw_info.ncr_config.scntl1 = values[3];
+    hw_info.ncr_config.dmode = values[4];
+    hw_info.ncr_config.scntl3 = values[5];
+    hw_info.ncr_config.stest1 = values[6];
+    debug("    ncr: SCID=%02x SXFER=%02x SCNTL0=%02x SCNTL1=%02x "
+          "DMODE=%02x SCNTL3=%02x STEST1=%02x\n",
+          hw_info.ncr_config.scid, hw_info.ncr_config.sxfer,
+          hw_info.ncr_config.scntl0, hw_info.ncr_config.scntl1,
+          hw_info.ncr_config.dmode, hw_info.ncr_config.scntl3,
+          hw_info.ncr_config.stest1);
+}
+
+/* Detect onboard NCR SCSI or the A3000 SDMAC revision. */
 void detect_sdmac(void)
 {
-    unsigned char sdmac_rev;
-    uint32_t ovalue, rvalue;
+    unsigned char ncr_rev;
+    ULONG ovalue, rvalue, revision;
     uint8_t sdmac_version = 0;
-    uint8_t istr;
+    UBYTE istr, asr;
     int pass;
-    uint8_t old_timeout;
     hw_info.sdmac_rev = 0;
-    hw_info.is_A4000T = FALSE;
+    hw_info.sdmac_present = FALSE;
+    hw_info.resdmac_version = 0;
+    hw_info.ncr_rev = 0;
+    hw_info.ncr_type = NCR_NONE;
+    memset(&hw_info.ncr_config, 0, sizeof(hw_info.ncr_config));
 
     if (hw_info.gary_type == FAT_GARY)
     { // you need fat gary to access ncr!
-        // Switch to DSACK timeout to avoid bus errors when probing
-        old_timeout = *((volatile uint8_t *)FAT_GARY_TIME_OUT_REG);
-        *((volatile uint8_t *)FAT_GARY_TIME_OUT_REG) = FAT_GARY_TIME_OUT_DSACK;
-
-        // now test for A4000T NCR53C710: upper four bits of CTEST8-register contains the chip-rev.
-        sdmac_rev = *((volatile unsigned char *)(NCR_CTEST8_REG));
-        sdmac_rev = (sdmac_rev & 0xF0) >> 4; // only upper four bits matter
-        if (sdmac_rev != 0 && sdmac_rev != 0xF)
-        {
-            hw_info.sdmac_rev = sdmac_rev;
-            hw_info.is_A4000T = TRUE;
+        /* The 53C770 has a different register map and revision register. */
+        if (detect_ncr53c770(&hw_info.ncr_rev)) {
+            hw_info.ncr_type = NCR_53C770;
+            read_ncr_config();
+            return;
         }
 
-        // Restore original timeout mode
-        *((volatile uint8_t *)FAT_GARY_TIME_OUT_REG) = old_timeout;
+        /* A4000T NCR53C710: CTEST8 contains the revision nibble. */
+        if (berr_probe_byte(NCR_CTEST8_REG, &ncr_rev) == 0) {
+            ncr_rev >>= 4;
+            if (ncr_rev != 0 && ncr_rev != 0xf) {
+                hw_info.ncr_rev = ncr_rev;
+                hw_info.ncr_type = NCR_53C710;
+            }
+        }
+        if (hw_info.ncr_type != NCR_NONE)
+            read_ncr_config();
     }
 
-    if (hw_info.ramsey_rev > 0 && hw_info.gary_type == FAT_GARY && !hw_info.is_A4000T) { //you need fat gary and ramsey to access sdmac!
-        // Switch to DSACK timeout to avoid bus errors on A4000
-        old_timeout = *((volatile uint8_t *)FAT_GARY_TIME_OUT_REG);
-        *((volatile uint8_t *)FAT_GARY_TIME_OUT_REG) = FAT_GARY_TIME_OUT_DSACK;
-
-        sdmac_rev = *((volatile unsigned char *)(SDMAC_REVISION)); //this works only on resdmac
-        if (sdmac_rev != 0 && sdmac_rev <= 0xF0) { //realistic values!
-            hw_info.sdmac_rev = sdmac_rev;
-            goto sdmac_done;
+    /* SDMAC access requires Fat Gary and Ramsey. */
+    if (hw_info.ramsey_rev > 0 && hw_info.gary_type == FAT_GARY &&
+        hw_info.ncr_type == NCR_NONE) {
+        /* ReSDMAC exposes four ASCII bytes (e.g. "v1.2"), not a chip
+         * revision byte. Validate the whole signature and its stability. */
+        if (berr_probe_long(SDMAC_REVISION, &rvalue) == 0 &&
+            (rvalue & 0xff00ff00UL) == 0x76002e00UL &&
+            ((rvalue >> 16) & 0xff) >= '0' &&
+            ((rvalue >> 16) & 0xff) <= '9' &&
+            (rvalue & 0xff) >= '0' && (rvalue & 0xff) <= '9') {
+            (void)*(volatile uint8_t *)RAMSEY_VER;
+            if (berr_probe_long(SDMAC_REVISION, &revision) == 0 &&
+                rvalue == revision) {
+                hw_info.resdmac_version = rvalue;
+                hw_info.sdmac_present = TRUE;
+                hw_info.sdmac_rev = 4;
+            }
         }
+        if (hw_info.resdmac_version)
+            return;
         if (hw_info.sdmac_rev == 0) {
             /* Quick check: ISTR bits - FIFO cannot be both empty and full */
-            istr = *SDMAC_ISTR;
-            if (istr == 0xff)
-                goto sdmac_done;
+            if (berr_probe_byte((ULONG)SDMAC_ISTR, &istr) || istr == 0xff)
+                return;
             if ((istr & SDMAC_ISTR_FIFOE) && (istr & SDMAC_ISTR_FIFOF))
-                goto sdmac_done;
+                return;
+            /* ASR is read-only and does not acknowledge WD interrupts.
+             * Reserved bits 2/3 distinguish open bus from a WD33C93. */
+            if (berr_probe_byte((ULONG)SDMAC_WD_ASR, &asr) ||
+                (asr & WD_ASR_RESERVED))
+                return;
+            hw_info.sdmac_present = TRUE;
             sdmac_version = 2; //default version
             /* Probe WTC registers to distinguish SDMAC-02 from SDMAC-04 */
             for (pass = 0; pass < 6; pass++) {
                 uint32_t wvalue;
+                int fault;
                 switch (pass) {
                     case 0: wvalue = 0x00000000; break;
                     case 1: wvalue = 0xffffffff; break;
@@ -1173,16 +1482,29 @@ void detect_sdmac(void)
                     case 5: wvalue = 0x3c3c3c3c; break;
                 }
                 Disable();
-                ovalue = *(volatile uint32_t *)SDMAC_WTC;
+                /* Never change a transfer count while SCSI is active or
+                 * awaiting service (INT, BSY, CIP, DBR in the WD ASR). */
+                if (berr_probe_byte((ULONG)SDMAC_WD_ASR, &asr) ||
+                    berr_probe_byte((ULONG)SDMAC_ISTR, &istr) ||
+                    (asr & (WD_ASR_ACTIVE | WD_ASR_RESERVED)) ||
+                    istr != SDMAC_ISTR_FIFOE ||
+                    berr_probe_long((ULONG)SDMAC_WTC, &ovalue)) {
+                    Enable();
+                    return;
+                }
                 *(volatile uint32_t *)SDMAC_WTC = wvalue;
                 (void) *(volatile uint32_t *)RAMSEY_VER; /* Push write to bus */
-                rvalue = *(volatile uint32_t *)SDMAC_WTC;
+                fault = berr_probe_long((ULONG)SDMAC_WTC, &rvalue);
                 *(volatile uint32_t *)SDMAC_WTC = ovalue;
+                (void) *(volatile uint32_t *)RAMSEY_VER;
                 Enable();
+                if (fault)
+                    return;
                 if (rvalue == wvalue) {
                     if ((wvalue != 0x00000000) && (wvalue != 0xffffffff)) {
                         sdmac_version = 0; /* Detection failed */
-                        goto sdmac_done;
+                        hw_info.sdmac_present = FALSE;
+                        return;
                     }
                 } else if (((rvalue ^ wvalue) & 0x00ffffff) == 0) {
                     /* SDMAC-02: only upper byte differs */
@@ -1193,17 +1515,123 @@ void detect_sdmac(void)
                 }
                 else {
                     sdmac_version = 0; /* Detection failed */
-                    goto sdmac_done;
+                    hw_info.sdmac_present = FALSE;
+                    return;
                 }
             }
             hw_info.sdmac_rev = sdmac_version;
         }
-sdmac_done:
-        // Restore original timeout mode
-        *((volatile uint8_t *)FAT_GARY_TIME_OUT_REG) = old_timeout;
     }
 }
 
+void format_dma_string(char *buffer, ULONG size)
+{
+    const char *name = get_string(hw_info.resdmac_version ?
+                                  MSG_RESDMAC : MSG_SDMAC);
+
+    if (hw_info.ncr_type != NCR_NONE)
+        copy_string(buffer, get_string(MSG_DMA_INTEGRATED), size);
+    else if (!hw_info.sdmac_present)
+        copy_string(buffer, get_string(MSG_NONE), size);
+    else if (hw_info.resdmac_version || !hw_info.sdmac_rev)
+        copy_string(buffer, name, size);
+    else
+        snprintf(buffer, size, "%s rev %02X", name, hw_info.sdmac_rev);
+}
+
+void format_resdmac_version(char *buffer, ULONG size)
+{
+    ULONG version = hw_info.resdmac_version;
+
+    snprintf(buffer, size, "%c%c%c%c", (int)(version >> 24),
+             (int)((version >> 16) & 0xff), (int)((version >> 8) & 0xff),
+             (int)(version & 0xff));
+}
+
+void format_scsi_chip_string(char *buffer, ULONG size)
+{
+    LocaleStringID name;
+
+    if (hw_info.ncr_type == NCR_53C770)
+        name = MSG_NCR_53C770;
+    else if (hw_info.ncr_type == NCR_53C710)
+        name = MSG_NCR_53C710;
+    else {
+        if (hw_info.sdmac_present && wd_info.chip != WD_UNKNOWN) {
+            name = wd_info.chip == WD_33C93B ? MSG_WD33C93B :
+                   wd_info.chip == WD_33C93A ? MSG_WD33C93A : MSG_WD33C93;
+            copy_string(buffer, get_string(name), size);
+            return;
+        }
+        /* The A3000 pairs Super DMAC with a WD33C93-compatible chip.
+         * Exact silicon/firmware identification requires a controller
+         * reset. Do not infer the suffix or read CDB1 as a revision:
+         * once the driver is running CDB1 contains command data. */
+        copy_string(buffer, get_string(hw_info.sdmac_present ?
+                                       MSG_WD33C93_FAMILY : MSG_NONE), size);
+        return;
+    }
+
+    snprintf(buffer, size, "%s rev %02X", get_string(name), hw_info.ncr_rev);
+}
+
+
+/* NCR53C710 Data Manual, chapter 4; SYM53C770 Data Manual, chapter 4.
+ * Report configuration rather than assuming the utility's board clocks.
+ * In particular, reading 710 SBCL returns bus signals, not its written
+ * synchronous divider, so a MHz rate cannot be recovered from that byte. */
+void format_ncr_detail(unsigned detail, char *buffer, ULONG size)
+{
+    BOOL wide_chip = hw_info.ncr_type == NCR_53C770;
+    unsigned value, offset, period;
+    const char *text = get_string(MSG_NA);
+
+    if (hw_info.ncr_type != NCR_NONE) {
+        switch (detail) {
+        case NCR_DETAIL_ID:
+            value = hw_info.ncr_config.scid;
+            if (wide_chip) {
+                value &= 15;
+            } else {
+                /* 710 SCID is a mask; arbitration uses its highest ID. */
+                if (!value) break;
+                for (offset = 0; value >>= 1; offset++) {}
+                value = offset;
+            }
+            snprintf(buffer, size, "%u", value);
+            return;
+        case NCR_DETAIL_BURST:
+            value = 1U << ((hw_info.ncr_config.dmode >> 6) + wide_chip);
+            snprintf(buffer, size, get_string(MSG_NCR_TRANSFERS), value);
+            return;
+        case NCR_DETAIL_SYNC:
+            offset = hw_info.ncr_config.sxfer & (wide_chip ? 31 : 15);
+            if (!offset) {
+                text = get_string(MSG_WD_ASYNC);
+                break;
+            }
+            if (!wide_chip && offset > 8) break; /* Reserved 710 offsets. */
+            period = 4 + ((hw_info.ncr_config.sxfer >> (wide_chip ? 5 : 4)) & 7);
+            /* Extra setup adds one clock to the send period on both chips. */
+            period += hw_info.ncr_config.scntl1 >> 7;
+            snprintf(buffer, size, "%u clk / %u", period, offset);
+            return;
+        case NCR_DETAIL_WIDTH:
+            value = wide_chip && (hw_info.ncr_config.scntl3 & 8) ? 16 : 8;
+            snprintf(buffer, size, "%u-bit", value);
+            return;
+        case NCR_DETAIL_PARITY:
+            text = get_string(hw_info.ncr_config.scntl0 & 8 ? MSG_ON : MSG_OFF);
+            break;
+        case NCR_DETAIL_DOUBLER:
+            if (wide_chip)
+                text = get_string((hw_info.ncr_config.stest1 & 12) == 12 ?
+                                  MSG_ON : MSG_OFF);
+            break;
+        }
+    }
+    copy_string(buffer, text, size);
+}
 
 /*
  * Detect Gary
@@ -1222,7 +1650,7 @@ void detect_gary(void)
         A safe register to read is DMACONR. If this register is mirrored A1000 is there.
 
         A600/A1200 have an undocumented revision register at DE1000, but the 8-bit code is
-        "morsed" only via the highest byte
+        shifted out one bit at a time via bit 7
 
         If this is "FF" or unstable, a A500/2000 is present.
     */
@@ -1275,12 +1703,19 @@ void detect_gary(void)
         testVal1 = *((volatile UWORD *)(CUSTOM_JOY1DAT));
         testVal2 = *((volatile UWORD *)(CUSTOM_JOY0DAT)); //avoid bus stickiness (A3000)
         testVal2 = *((volatile UWORD *)(CUSTOM_JOY1DAT_MIRR));
+        /* Idle ports read $0000, as does unmapped space such as WinUAE's
+         * A1200 Gayle window. INTENAR is nonzero while the OS runs. */
         if (testVal1 == testVal2) {
+            testVal1 = *((volatile UWORD *)(CUSTOM_INTENAR));
+            testVal2 = *((volatile UWORD *)(CUSTOM_JOY0DAT)); //avoid bus stickiness (A3000)
+            testVal2 = *((volatile UWORD *)(CUSTOM_INTENAR_MIRR));
+        }
+        if (testVal1 != 0 && testVal1 == testVal2) {
             hw_info.gary_type = GARY_A1000;
-            /* An A1000 always has a DIP Agnus; the VPOSR mirror test in
-             * detect_chipset() can misread Fat Agnus on accelerated
-             * machines (issue #26). Note this also matches the German
-             * A2000-A, which uses the same DIP chipset. */
+            /* An OCS A1000 has a DIP Agnus; the VPOSR mirror test in
+             * detect_chipset() can misread Fat Agnus on expanded machines.
+             * This also matches the German A2000-A.
+             * Leave ECS upgrades such as the Rejuvenator unchanged. */
             if (hw_info.agnus_type == AGNUS_OCS_FAT_NTSC) {
                 hw_info.agnus_type = AGNUS_OCS_NTSC;
                 debug("    systemchips: A1000 Gary, correcting Agnus to DIP NTSC\n");
@@ -1300,6 +1735,8 @@ void detect_gary(void)
     now we read the GAYLE_ID: Write a zero to the ID-register and read it back 8 times!
     */
 
+    /* Keep other tasks from restarting the serial ID read. */
+    Forbid();
     for (j=0;j<4;++j) {
         val = 0;
         //test for mirroring (A500)
@@ -1309,10 +1746,11 @@ void detect_gary(void)
             tmp = *((volatile unsigned char *)(GAYLE_ID));
             if (i == 0 && tmp == tmp2) { //a500 gary!
                 hw_info.gary_type = GARY_A500;
+                Permit();
                 return;
             }
-            //mask
-            tmp &= 0x80>>i;
+            /* Every read supplies the next ID bit in bit 7. */
+            tmp &= 0x80;
             val = val|(tmp>>i);
         }
         if (j==0) {
@@ -1321,10 +1759,12 @@ void detect_gary(void)
         else {
             if (val2 != val) { //inconsistent results -> A500 gary
                 hw_info.gary_type = GARY_A500;
+                Permit();
                 return;
             }
         }
     }
+    Permit();
     if (val!=0xFF && val !=0) {
         hw_info.gary_type = GAYLE;
         hw_info.gary_rev = val;
@@ -1349,6 +1789,7 @@ void detect_system_chips(void)
     detect_ramsey();
     debug("    systemchips: Detecting SDMAC...\n");
     detect_sdmac();
+    detect_additional_chips();
 
 
     debug("    systemchips: Detecting bus system...\n");
@@ -1398,7 +1839,7 @@ void detect_system_chips(void)
     hw_info.has_zorro_slots = TRUE;
     if (hw_info.gary_type == GARY_A1000) {
         /* The A1000 86-pin edge connector predates Zorro II; show plain
-         * ZORRO (issue #26). The German A2000-A is mislabelled by this
+         * ZORRO. The German A2000-A is mislabelled by this
          * (same chipset, real Zorro II slots), accepted as a corner case. */
         snprintf(hw_info.card_slot_string, sizeof(hw_info.card_slot_string),
                  "%s", get_string(MSG_SLOT_ZORRO));
@@ -1439,8 +1880,11 @@ void detect_frequencies(void)
           "PowerSupplyFrequency=%lu\n",
           (ULONG)GfxBase->DisplayFlags, hw_info.vert_freq, hw_info.supply_freq);
 
-    /* EClock frequency from exec */
-    hw_info.eclock_freq = SysBase->ex_EClockFrequency;
+    /* ex_EClockFrequency was added in Exec V36. */
+    if (SysBase->LibNode.lib_Version >= 36)
+        hw_info.eclock_freq = SysBase->ex_EClockFrequency;
+    else
+        hw_info.eclock_freq = hw_info.is_pal ? 709379 : 715909;
 }
 
 /*

@@ -8,15 +8,21 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdlib.h>
+#include <limits.h>
 
 #include <dos/dos.h>
 #include <dos/datetime.h>
+#include <dos/dosextens.h>
 
 #include <proto/dos.h>
 
 #include "xsysinfo.h"
+#include "format.h"
+#include "which.h"
 #include "print.h"
 #include "hardware.h"
+#include "wdprobe.h"
 #include "software.h"
 #include "benchmark.h"
 #include "memory.h"
@@ -35,47 +41,55 @@ extern MemoryRegionList memory_regions;
 extern BoardList board_list;
 extern DriveList drive_list;
 
-static BOOL export_write_failed;
+typedef struct {
+    BOOL (*write)(void *context, const char *text, ULONG length);
+    void *context;
+    BOOL failed;
+} ReportOutput;
 
-static void write_export_bytes(BPTR fh, const char *str, LONG len)
+static BOOL write_file(void *context, const char *text, ULONG length)
 {
-    if (len <= 0) {
-        return;
+    BPTR fh = *(BPTR *)context;
+    while (length) {
+        LONG written = Write(fh, text, length);
+        if (written <= 0) return FALSE;
+        text += written;
+        length -= written;
     }
-
-    if (Write(fh, (const char *)str, len) != len) {
-        export_write_failed = TRUE;
-    }
+    return TRUE;
 }
 
-/* Helper macro for writing to file */
-#define WRITE_LINE(fh, str) do { \
-    write_export_bytes(fh, (const char *)str, \
-                       (LONG)strlen((const char *)str)); \
-    write_export_bytes(fh, (const char *)"\n", 1); \
-} while (0)
+static void write_line(void *context, const char *line)
+{
+    ReportOutput *out = context;
+    if (!out->failed &&
+        (!out->write(out->context, line, strlen(line)) ||
+         !out->write(out->context, "\n", 1)))
+        out->failed = TRUE;
+}
 
-/*
- * Write a formatted line to file
- */
-static void write_formatted(BPTR fh, const char *format, ...)
+#define WRITE_LINE(out, str) write_line(out, (const char *)(str))
+
+static void write_formatted(ReportOutput *out, const char *format, ...)
 {
     char buffer[256];
     va_list args;
+    int length;
 
+    if (out->failed) return;
     va_start(args, format);
-    if (vsnprintf(buffer, sizeof(buffer), format, args) < 0) {
-        buffer[0] = '\0';
-        export_write_failed = TRUE;
-    }
+    length = vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
-
-    WRITE_LINE(fh, (STRPTR)buffer);
+    if (length < 0 || (size_t)length >= sizeof(buffer)) {
+        out->failed = TRUE;
+        return;
+    }
+    write_line(out, buffer);
 }
 
 static const char *on_off_string(BOOL enabled)
 {
-    return enabled ? "ON" : "OFF";
+    return enabled ? "On" : "Off";
 }
 
 static const char *yes_no_string(BOOL enabled)
@@ -85,16 +99,8 @@ static const char *yes_no_string(BOOL enabled)
 
 static void format_speed_display(ULONG speed, char *buffer, ULONG size)
 {
-    if (speed >= 1000000) {
-        snprintf(buffer, size, "%lu.%lu MB/s",
-                 (unsigned long)(speed / 1000000),
-                 (unsigned long)((speed % 1000000) / 100000));
-    } else if (speed >= 10000) {
-        snprintf(buffer, size, "%lu.%lu KB/s",
-                 (unsigned long)(speed / 1000),
-                 (unsigned long)((speed % 1000) / 100));
-    } else if (speed > 0) {
-        snprintf(buffer, size, "%lu B/s", (unsigned long)speed);
+    if (speed > 0) {
+        format_transfer_rate(speed, TRUE, buffer, size);
     } else {
         snprintf(buffer, size, "---");
     }
@@ -140,13 +146,13 @@ static void format_fpu_string(char *buffer, ULONG size)
             snprintf(buffer, size, "%s %s MHz",
                      hw_info.fpu_string, mhz_buf);
         } else {
-            snprintf(buffer, size, "%s %s MHz (OFF)",
+            snprintf(buffer, size, "%s %s MHz (Off)",
                      hw_info.fpu_string, mhz_buf);
         }
     } else if (hw_info.fpu_enabled || hw_info.fpu_type == FPU_NONE) {
         snprintf(buffer, size, "%s", hw_info.fpu_string);
     } else {
-        snprintf(buffer, size, "%s (OFF)", hw_info.fpu_string);
+        snprintf(buffer, size, "%s (Off)", hw_info.fpu_string);
     }
 }
 
@@ -186,31 +192,18 @@ static void format_ramsey_refresh(char *buffer, ULONG size)
         snprintf(buffer, size, "372 clk");
         break;
     default:
-        snprintf(buffer, size, "off");
+        snprintf(buffer, size, "Off");
         break;
-    }
-}
-
-static void format_sdmac_string(char *buffer, ULONG size)
-{
-    if (hw_info.sdmac_rev && hw_info.gary_type == FAT_GARY) {
-        snprintf(buffer, size, "%s REV %02X",
-                 hw_info.is_A4000T ? get_string(MSG_NCR_53C710) :
-                                     get_string(MSG_SDMAC),
-                 hw_info.sdmac_rev);
-    } else {
-        snprintf(buffer, size, "N/A");
     }
 }
 
 /*
  * Export header with date/time
  */
-void export_header(BPTR fh)
+static void export_header(ReportOutput *fh)
 {
     char date_str[32]; date_str[0] = '\0';
     char time_str[32]; time_str[0] = '\0';
-#ifndef __KICK13__
     struct DateTime dt;
 
     DateStamp(&dt.dat_Stamp);
@@ -220,20 +213,21 @@ void export_header(BPTR fh)
     dt.dat_StrDate = (STRPTR)date_str;
     dt.dat_StrTime = (STRPTR)time_str;
 
-    DateToStr(&dt);
-#endif
+    if (DOSBase->dl_lib.lib_Version >= 36)
+        DateToStr(&dt);
 
     WRITE_LINE(fh, "================================================================================");
     WRITE_LINE(fh, "                    " XSYSINFO_NAME " " XSYSINFO_VERSION " System Report");
     WRITE_LINE(fh, "================================================================================");
-    write_formatted(fh, "Generated: %s %s", date_str, time_str);
+    if (date_str[0])
+        write_formatted(fh, "Generated: %s %s", date_str, time_str);
     WRITE_LINE(fh, "");
 }
 
 /*
  * Export hardware information
  */
-void export_hardware(BPTR fh)
+static void export_hardware(ReportOutput *fh)
 {
     char buffer[74];
 
@@ -242,6 +236,7 @@ void export_hardware(BPTR fh)
     write_formatted(fh, "%-16s %s", "Clock:", hw_info.clock_string);
     write_formatted(fh, "%-16s %s", "Amiga:",
                     hw_info.amiga_model_string);
+    write_formatted(fh, "%-16s %s", "Mode:", hw_info.mode_string);
 
     /* DMA/Gfx */
     switch (hw_info.agnus_type)
@@ -306,8 +301,6 @@ void export_hardware(BPTR fh)
     }
     write_formatted(fh, "%-16s %s", "DMA/Gfx:", buffer);
 
-    write_formatted(fh, "%-16s %s", "Mode:", hw_info.mode_string);
-
     /* Display */
     switch (hw_info.denise_type)
     {
@@ -338,6 +331,12 @@ void export_hardware(BPTR fh)
     format_paula_string(buffer, sizeof(buffer));
     write_formatted(fh, "%-16s %s", "Sound:", buffer);
 
+    format_ramsey_rev_string(buffer, sizeof(buffer));
+    write_formatted(fh, "%-16s %s", "RAM ctrl.:", buffer);
+
+    format_gary_string(buffer, sizeof(buffer));
+    write_formatted(fh, "%-16s %s", "Decoding:", buffer);
+
     {
         char mhz_buf[16];
         char frequency[24] = "";
@@ -367,8 +366,12 @@ void export_hardware(BPTR fh)
     format_fpu_string(buffer, sizeof(buffer));
     write_formatted(fh, "%-16s %s", "FPU:", buffer);
 
-    if (hw_info.mmu_enabled) {
-        snprintf(buffer, sizeof(buffer), "%s (IN USE)", hw_info.mmu_string);
+    if (hw_info.mmu_translation == MMU_TRANSLATION_ENABLED) {
+        snprintf(buffer, sizeof(buffer), "%s (In use)", hw_info.mmu_string);
+    } else if (hw_info.mmu_translation == MMU_TRANSLATION_UNKNOWN &&
+               hw_info.mmu_type != MMU_NONE) {
+        snprintf(buffer, sizeof(buffer), "%s (%s)", hw_info.mmu_string,
+                 get_string(MSG_UNKNOWN));
     } else {
         strncpy(buffer, hw_info.mmu_string, sizeof(buffer) - 1);
     }
@@ -393,16 +396,10 @@ void export_hardware(BPTR fh)
             ((unsigned long long)hw_info.horiz_freq * 100ULL) / 1000ULL;
         format_scaled(buffer, sizeof(buffer), (ULONG)horiz_khz, FALSE);
     }
-    write_formatted(fh, "%-16s %s KHz", "Horiz Freq:", buffer);
+    write_formatted(fh, "%-16s %s kHz", "Horiz Freq:", buffer);
 
-    snprintf(buffer, sizeof(buffer), "%lu", (unsigned long)hw_info.eclock_freq);
-    write_formatted(fh, "%-16s %s Hz", "EClock:", buffer);
-
-    format_ramsey_rev_string(buffer, sizeof(buffer));
-    write_formatted(fh, "%-16s %s", "Ramsey Rev:", buffer);
-
-    format_gary_string(buffer, sizeof(buffer));
-    write_formatted(fh, "%-16s %s", "Gary Rev:", buffer);
+    format_frequency(hw_info.eclock_freq, buffer, sizeof(buffer));
+    write_formatted(fh, "%-16s %s", "EClock:", buffer);
 
     write_formatted(fh, "%-16s %s", "Card Slot:", hw_info.card_slot_string);
 
@@ -417,23 +414,23 @@ void export_hardware(BPTR fh)
     /* Cache status */
     WRITE_LINE(fh, "Cache Status:");
     write_formatted(fh, "  ICache:   %s",
-                    hw_info.has_icache ? (hw_info.icache_enabled ? "ON" : "OFF") : "N/A");
+                    hw_info.has_icache ? (hw_info.icache_enabled ? "On" : "Off") : "N/A");
     write_formatted(fh, "  DCache:   %s",
-                    hw_info.has_dcache ? (hw_info.dcache_enabled ? "ON" : "OFF") : "N/A");
+                    hw_info.has_dcache ? (hw_info.dcache_enabled ? "On" : "Off") : "N/A");
     write_formatted(fh, "  IBurst:   %s",
-                    hw_info.has_iburst ? (hw_info.iburst_enabled ? "ON" : "OFF") : "N/A");
+                    hw_info.has_iburst ? (hw_info.iburst_enabled ? "On" : "Off") : "N/A");
     write_formatted(fh, "  DBurst:   %s",
-                    hw_info.has_dburst ? (hw_info.dburst_enabled ? "ON" : "OFF") : "N/A");
+                    hw_info.has_dburst ? (hw_info.dburst_enabled ? "On" : "Off") : "N/A");
     write_formatted(fh, "  CopyBack: %s",
-                    hw_info.has_copyback ? (hw_info.copyback_enabled ? "ON" : "OFF") : "N/A");
+                    hw_info.has_copyback ? (hw_info.copyback_enabled ? "On" : "Off") : "N/A");
     write_formatted(fh, "  Super Scalar: %s",
                     hw_info.has_super_scalar ?
-                    (hw_info.super_scalar_enabled ? "ON" : "OFF") : "N/A");
+                    (hw_info.super_scalar_enabled ? "On" : "Off") : "N/A");
 
     WRITE_LINE(fh, "");
     WRITE_LINE(fh, "Extended Hardware:");
     format_ramsey_rev_string(buffer, sizeof(buffer));
-    write_formatted(fh, "  Ramsey Rev:     %s", buffer);
+    write_formatted(fh, "  RAM ctrl.:      %s", buffer);
 
     if (hw_info.ramsey_rev) {
         write_formatted(fh, "  Ramsey Control:");
@@ -443,10 +440,10 @@ void export_hardware(BPTR fh)
                         on_off_string(hw_info.ramsey_burst_enabled));
         write_formatted(fh, "    Wrap:         %s",
                         on_off_string(hw_info.ramsey_wrap_enabled));
-        write_formatted(fh, "    Size:         %s",
-                        hw_info.ramsey_size_1M ? "1M" : "256K");
-        write_formatted(fh, "    Skip:         %s",
-                        on_off_string(hw_info.ramsey_skip_enabled));
+        write_formatted(fh, "    RAM size:     %s", get_ramsey_size_string());
+        if (hw_info.ramsey_rev == 0x0f)
+            write_formatted(fh, "    Skip:         %s",
+                            on_off_string(hw_info.ramsey_skip_enabled));
         format_ramsey_refresh(buffer, sizeof(buffer));
         write_formatted(fh, "    Refresh:      %s", buffer);
     }
@@ -463,7 +460,7 @@ void export_hardware(BPTR fh)
                         on_off_string(hw_info.battMemData.scan_luns));
         write_formatted(fh, "    Sync Trans.:  %s",
                         on_off_string(hw_info.battMemData.sync_transfer));
-        write_formatted(fh, "    Fast Sync:    %s",
+        write_formatted(fh, "    Fast sync:    %s",
                         on_off_string(hw_info.battMemData.fast_sync_transfer));
         write_formatted(fh, "    Queuing:      %s",
                         on_off_string(hw_info.battMemData.tagged_queuing));
@@ -473,8 +470,39 @@ void export_hardware(BPTR fh)
         WRITE_LINE(fh, "    N/A");
     }
 
-    format_sdmac_string(buffer, sizeof(buffer));
-    write_formatted(fh, "  SDMAC/NCR:      %s", buffer);
+    format_dma_string(buffer, sizeof(buffer));
+    write_formatted(fh, "  DMA chip:       %s", buffer);
+    if (hw_info.resdmac_version) {
+        format_resdmac_version(buffer, sizeof(buffer));
+        write_formatted(fh, "    Firmware:     %s", buffer);
+    }
+    format_scsi_chip_string(buffer, sizeof(buffer));
+    write_formatted(fh, "  SCSI chip:      %s", buffer);
+    if (hw_info.sdmac_present && wd_info.chip != WD_UNKNOWN) {
+        static const char *labels[WD_DETAIL_COUNT] = {
+            "Microcode", "SCSI clock", "I/O mode", "Timeout", "Sync / offset"
+        };
+        unsigned detail;
+        for (detail = 0; detail < WD_DETAIL_COUNT; detail++) {
+            format_wd_detail(detail, buffer, sizeof(buffer));
+            write_formatted(fh, "    %-13s %s", labels[detail], buffer);
+        }
+        WRITE_LINE(fh, "    Configuration captured before the SCSI check;");
+        WRITE_LINE(fh, "    sync setting describes the last selected target.");
+    }
+    if (hw_info.ncr_type != NCR_NONE) {
+        static const char *labels[NCR_DETAIL_COUNT] = {
+            "SCSI ID", "DMA burst", "Sync / offset", "Data width",
+            "Parity check", "Clock doubler"
+        };
+        unsigned detail;
+        unsigned count = hw_info.ncr_type == NCR_53C770 ?
+                         NCR_DETAIL_COUNT : NCR_DETAIL_DOUBLER;
+        for (detail = 0; detail < count; detail++) {
+            format_ncr_detail(detail, buffer, sizeof(buffer));
+            write_formatted(fh, "    %-13s %s", labels[detail], buffer);
+        }
+    }
 
     WRITE_LINE(fh, "");
 }
@@ -482,11 +510,28 @@ void export_hardware(BPTR fh)
 /*
  * Export software lists
  */
-void export_software(BPTR fh)
+/* The overview rows of the System Software panel: OS, ROMs, Workbench,
+ * SetPatch, graphics system and PPC runtime. */
+static void export_software_overview(ReportOutput *out, BOOL colon)
+{
+    ULONG i;
+    char buffer[80], label[32];
+
+    for (i = 0; i < software_overview_count(); i++) {
+        snprintf(label, sizeof(label), "%s%s",
+                 get_string(software_overview_label(i)), colon ? ":" : "");
+        write_formatted(out, "%-16s %s", label,
+            format_software_overview_value(i, buffer, sizeof(buffer)));
+    }
+}
+
+static void export_software(ReportOutput *fh)
 {
     ULONG i;
 
     WRITE_LINE(fh, "=== SYSTEM SOFTWARE ===");
+    WRITE_LINE(fh, "");
+    export_software_overview(fh, TRUE);
     WRITE_LINE(fh, "");
 
     /* Libraries */
@@ -534,7 +579,7 @@ void export_software(BPTR fh)
 /*
  * Export benchmark results
  */
-void export_benchmarks(BPTR fh)
+static void export_benchmarks(ReportOutput *fh, BOOL references)
 {
     WRITE_LINE(fh, "=== SPEED COMPARISONS ===");
     WRITE_LINE(fh, "");
@@ -577,7 +622,7 @@ void export_benchmarks(BPTR fh)
                 strncpy(rom_str, "N/A", sizeof(rom_str));
             }
 
-            write_formatted(fh, "Memory Speed:      CHIP %s  FAST %s  ROM %s MB/s",
+            write_formatted(fh, "Memory Speed:      Chip %s  Fast %s  ROM %s MB/s",
                            chip_str, fast_str, rom_str);
         }
     } else {
@@ -585,6 +630,8 @@ void export_benchmarks(BPTR fh)
     }
 
     WRITE_LINE(fh, "");
+
+    if (!references) return;
 
     /* Reference systems */
     WRITE_LINE(fh, "Reference Systems:");
@@ -604,7 +651,7 @@ void export_benchmarks(BPTR fh)
 /*
  * Export memory information
  */
-void export_memory(BPTR fh)
+static void export_memory(ReportOutput *fh)
 {
     ULONG i;
     char size_str[32];
@@ -633,12 +680,7 @@ void export_memory(BPTR fh)
         write_formatted(fh, "  Free:    %lu bytes", (unsigned long)r->amount_free);
         write_formatted(fh, "  Largest: %lu bytes", (unsigned long)r->largest_block);
         write_formatted(fh, "  Chunks:  %lu", (unsigned long)r->num_chunks);
-        if (r->speed_measured) {
-            format_speed_display(r->speed_bytes_sec, speed_str,
-                                 sizeof(speed_str));
-        } else {
-            snprintf(speed_str, sizeof(speed_str), "---");
-        }
+        format_memory_speed(r, speed_str, sizeof(speed_str));
         write_formatted(fh, "  Speed:   %s", speed_str);
         WRITE_LINE(fh, "");
     }
@@ -647,7 +689,7 @@ void export_memory(BPTR fh)
 /*
  * Export expansion boards
  */
-void export_boards(BPTR fh)
+static void export_boards(ReportOutput *fh)
 {
     ULONG i;
 
@@ -681,7 +723,50 @@ void export_boards(BPTR fh)
 /*
  * Export drives information
  */
-void export_drives(BPTR fh)
+static void export_drive_speed(ReportOutput *fh, const DriveSpeedResults *results,
+                               ULONG bytes_sec)
+{
+    ULONG i;
+    const char *memory_type = (results->buffer_type & MEMF_CHIP) ? "Chip RAM" :
+                             (results->buffer_type & MEMF_FAST) ? "Fast RAM" :
+                             "Unknown";
+
+    write_formatted(fh, "  Speed test:  Sequential device reads, %lu sample(s)",
+                    (unsigned long)results->sample_count);
+    if (results->sample_count > 1) {
+        write_formatted(fh, "  Statistic:   Median %lu B/s; consecutive ranges, caches unchanged",
+                        (unsigned long)bytes_sec);
+        write_formatted(fh, "  Range:       %lu..%lu B/s",
+                        (unsigned long)results->min_bytes_sec,
+                        (unsigned long)results->max_bytes_sec);
+    }
+    write_formatted(fh, "  Read command: %s",
+                    drive_read_cmd_name(results->read_command));
+    write_formatted(fh, "  Read buffer: %s, type $%08lX, requested $%08lX",
+                    memory_type, (unsigned long)results->buffer_type,
+                    (unsigned long)results->buffer_flags);
+    if (results->safe_buffer_retry)
+        WRITE_LINE(fh, "  Buffer retry: Restarted with Chip RAM after a read failure");
+    if (results->offset_fallback)
+        WRITE_LINE(fh, "  Read offset: Fell back to device start; 64-bit read failed");
+
+    for (i = 0; i < results->sample_count; i++) {
+        const DriveSpeedSample *s = &results->samples[i];
+
+        write_formatted(fh, "  Sample %lu:   %lu B/s, %lu bytes in %lu us",
+                        (unsigned long)(i + 1), (unsigned long)s->bytes_sec,
+                        (unsigned long)s->bytes_read,
+                        (unsigned long)s->elapsed_us);
+        write_formatted(fh, "    Offset:    $%08lX:%08lX, %lu reads of %lu..%lu bytes",
+                        (unsigned long)(s->offset >> 32),
+                        (unsigned long)s->offset,
+                        (unsigned long)s->read_count,
+                        (unsigned long)s->min_transfer,
+                        (unsigned long)s->max_transfer);
+    }
+}
+
+static void export_drives(ReportOutput *fh)
 {
     ULONG i;
 
@@ -736,52 +821,168 @@ void export_drives(BPTR fh)
         write_formatted(fh, "  Buffers:     %lu",
                         (unsigned long)d->num_buffers);
         write_formatted(fh, "  Speed:       %s", speed_buffer);
+        if (d->speed_measured && d->speed_results.sample_count)
+            export_drive_speed(fh, &d->speed_results, d->speed_bytes_sec);
 
         WRITE_LINE(fh, "");
     }
 }
 
-/*
- * Export all information to a DOS file handle
- */
-BOOL export_to_handle(BPTR fh)
+/* A short overview, using the same formatted values as the hardware GUI. */
+static void brief_hardware_row(const HardwareInfoRow *row, void *context)
 {
-    if (!fh) {
-        return FALSE;
-    }
-
-    export_write_failed = FALSE;
-
-    export_header(fh);
-    export_hardware(fh);
-    export_software(fh);
-    export_benchmarks(fh);
-    export_memory(fh);
-    export_boards(fh);
-    export_drives(fh);
-
-    WRITE_LINE(fh, "================================================================================");
-    WRITE_LINE(fh, "                          End of " XSYSINFO_NAME " Report");
-    WRITE_LINE(fh, "================================================================================");
-
-    return !export_write_failed;
+    if (row->value && !row->detail)
+        write_formatted(context, "%-16s %s", row->label, row->value);
 }
 
-/*
- * Export all information to file
- */
-BOOL export_to_file(const char *filename)
+static void export_brief(ReportOutput *out)
 {
-    BPTR fh;
-    BOOL ok;
+    ULONG i;
 
-    fh = Open((STRPTR)filename, MODE_NEWFILE);
-    if (!fh) {
+    visit_hardware_rows(HARDWARE_STD, brief_hardware_row, out);
+    WRITE_LINE(out, "");
+    export_software_overview(out, FALSE);
+    WRITE_LINE(out, "");
+    export_benchmarks(out, FALSE);
+    WRITE_LINE(out, "=== EXPANSION BOARDS ===");
+    if (!board_list.count) WRITE_LINE(out, "No expansion boards detected.");
+    for (i = 0; i < board_list.count; i++) {
+        const BoardInfo *board = &board_list.boards[i];
+        write_formatted(out, "%s: %s (%s, %s)", board->manufacturer_name,
+            board->product_name, get_board_type_string(board->board_type),
+            board->size_string);
+    }
+    WRITE_LINE(out, "");
+}
+
+static BOOL emit_report(ReportFormat format, ReportOutput *out)
+{
+    if (format == REPORT_WHICH) {
+        which_compat_emit(&hw_info, &system_software, &memory_regions,
+                          &board_list, write_line, out);
+    } else if (format == REPORT_BRIEF || format == REPORT_FULL) {
+        export_header(out);
+        if (format == REPORT_BRIEF) {
+            export_brief(out);
+        } else {
+            export_hardware(out);
+            export_software(out);
+            export_benchmarks(out, TRUE);
+            export_memory(out);
+            export_boards(out);
+            export_drives(out);
+        }
+        WRITE_LINE(out, "================================================================================");
+        WRITE_LINE(out, "                          End of " XSYSINFO_NAME " Report");
+        WRITE_LINE(out, "================================================================================");
+    } else {
         return FALSE;
     }
+    return !out->failed;
+}
 
-    ok = export_to_handle(fh);
-    Close(fh);
+BOOL export_report_to_handle(BPTR fh, ReportFormat format)
+{
+    ReportOutput out = { write_file, &fh, FALSE };
+    return fh && emit_report(format, &out);
+}
 
-    return ok;
+typedef struct {
+    char *text;
+    ULONG length, capacity;
+} ReportBuffer;
+
+static BOOL append_report(void *context, const char *text, ULONG length)
+{
+    ReportBuffer *buffer = context;
+    ULONG needed, capacity;
+    char *grown;
+
+    if (length > LONG_MAX - buffer->length - 1) return FALSE;
+    needed = buffer->length + length + 1;
+    if (needed > buffer->capacity) {
+        capacity = buffer->capacity ? buffer->capacity : 4096;
+        while (capacity < needed) {
+            if (capacity > LONG_MAX / 2) { capacity = needed; break; }
+            capacity *= 2;
+        }
+        grown = realloc(buffer->text, capacity);
+        if (!grown) return FALSE;
+        buffer->text = grown;
+        buffer->capacity = capacity;
+    }
+    memcpy(buffer->text + buffer->length, text, length);
+    buffer->length += length;
+    buffer->text[buffer->length] = '\0';
+    return TRUE;
+}
+
+/* Build off to the side: callers can keep the current preview on failure.
+ * Newlines become NULs for both viewers; saving restores exactly those LFs. */
+BOOL create_report(ReportText *report, ReportFormat format)
+{
+    ReportBuffer buffer = { 0 };
+    ReportOutput out = { append_report, &buffer, FALSE };
+    ReportText result = { 0 };
+    ULONG i, line = 0;
+    char *start;
+
+    if (!emit_report(format, &out)) goto failed;
+    for (i = 0; i < buffer.length; i++)
+        if (buffer.text[i] == '\n') result.count++;
+    if (!result.count || result.count > LONG_MAX / sizeof(char *)) goto failed;
+    result.lines = malloc(result.count * sizeof(char *));
+    if (!result.lines) goto failed;
+    start = buffer.text;
+    for (i = 0; i < buffer.length; i++) {
+        if (buffer.text[i] == '\n') {
+            ULONG width = buffer.text + i - start;
+            buffer.text[i] = '\0';
+            result.lines[line++] = start;
+            if (width > result.width) result.width = width;
+            start = buffer.text + i + 1;
+        }
+    }
+    result.text = buffer.text;
+    result.format = format;
+    *report = result;
+    return TRUE;
+failed:
+    free(buffer.text);
+    return FALSE;
+}
+
+void free_report(ReportText *report)
+{
+    free(report->lines);
+    free(report->text);
+    memset(report, 0, sizeof(*report));
+}
+
+BOOL save_report(const ReportText *report, const char *filename)
+{
+    BPTR fh;
+    ReportOutput out;
+    ULONG i;
+    BOOL closed;
+
+    if (!report->text) return FALSE;
+    fh = Open((CONST_STRPTR)filename, MODE_NEWFILE);
+    if (!fh) return FALSE;
+    out.write = write_file;
+    out.context = &fh;
+    out.failed = FALSE;
+    for (i = 0; i < report->count && !out.failed; i++)
+        write_line(&out, report->lines[i]);
+    closed = Close(fh);
+    /* Close() did not return a success flag before DOS V36. */
+    return !out.failed && (DOSBase->dl_lib.lib_Version < 36 || closed);
+}
+
+const char *report_format_name(ReportFormat format)
+{
+    static const LocaleStringID labels[REPORT_COUNT] = {
+        MSG_REPORT_WHICH, MSG_REPORT_BRIEF, MSG_REPORT_FULL
+    };
+    return get_string(labels[format]);
 }

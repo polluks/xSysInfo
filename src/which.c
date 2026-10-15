@@ -6,25 +6,7 @@
 
 #include <libraries/identify.h>
 
-#include <proto/dos.h>
-
 #include "which.h"
-
-typedef struct {
-    BPTR fh;
-    BOOL failed;
-} WhichOutput;
-
-static void output_line(void *context, const char *line)
-{
-    WhichOutput *output = (WhichOutput *)context;
-    LONG length = (LONG)strlen(line);
-
-    if ((length && Write(output->fh, line, length) != length) ||
-        Write(output->fh, "\n", 1) != 1) {
-        output->failed = TRUE;
-    }
-}
 
 static void format_mhz(char *buffer, ULONG size, ULONG mhz_x100)
 {
@@ -70,6 +52,8 @@ static const char *kickstart_name(UWORD version, UWORD revision)
         if (revision >= 102)
             return "Kickstart 3.2.1";
         return "Kickstart 3.2";
+    case 48:
+        return "Kickstart 3.3";
     default:
         return "Kickstart unknown";
     }
@@ -145,6 +129,8 @@ static const char *workbench_name(ULONG os_number, UWORD version, UWORD revision
             revision >= 3)
             return "Workbench 3.2.1";
         return "Workbench 3.2";
+    case 48:
+        return "Workbench 3.3";
     default:
         return "Workbench unknown";
     }
@@ -237,7 +223,9 @@ static void build_mmu_string(char *buffer, ULONG size,
     }
 
     snprintf(buffer, size, "%smmu %s", name,
-             hardware->mmu_enabled ? "running" : "not active");
+             hardware->mmu_translation == MMU_TRANSLATION_ENABLED ? "running" :
+             hardware->mmu_translation == MMU_TRANSLATION_DISABLED ?
+             "not active" : "state unknown");
 }
 
 static void build_graphics_chip(char *buffer, ULONG size,
@@ -556,18 +544,4 @@ void which_compat_emit(const HardwareInfo *hardware,
     build_model_phrase(value, sizeof(value), hardware);
     snprintf(line, sizeof(line), " Your computer %s.", value);
     emit_line(context, line);
-}
-
-BOOL export_which_compatible(BPTR fh)
-{
-    WhichOutput output;
-
-    if (!fh)
-        return FALSE;
-
-    output.fh = fh;
-    output.failed = FALSE;
-    which_compat_emit(&hw_info, &system_software, &memory_regions, &board_list,
-                      output_line, &output);
-    return !output.failed;
 }

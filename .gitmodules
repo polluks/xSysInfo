@@ -1,9 +1,14 @@
 [submodule "3rdparty/identify"]
 	path = 3rdparty/identify
 	url = https://github.com/reinauer/identify
+	branch = xsysinfo
 [submodule "3rdparty/flexcat"]
 	path = 3rdparty/flexcat
 	url = https://github.com/reinauer/flexcat
 [submodule "3rdparty/TinySetPatch"]
 	path = 3rdparty/TinySetPatch
 	url = https://github.com/reinauer/TinySetPatch
+[submodule "3rdparty/L-Packer"]
+	path = 3rdparty/L-Packer
+	url = https://github.com/reinauer/L-Packer.git
+	branch = library

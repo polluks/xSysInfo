@@ -16,10 +16,10 @@ Kapcsolat:
 ; Section headers
 ;
 MSG_SYSTEM_SOFTWARE
-TELEPÍTETT RENDSZERSZOFTVER
+RENDSZERSZOFTVER
 ;
 MSG_INTERNAL_HARDWARE
-HARDVER INFORMÁCIÓK
+HARDVER
 ;
 MSG_SPEED_COMPARISONS
 SEBESSÉG ÖSSZEHASONLÍTÁSOK
@@ -91,16 +91,16 @@ MSG_COMMENT
 Megjegyz.
 ;
 MSG_HORIZ_KHZ
-Vízsz. KHz
+Vízsz. kHz
 ;
 MSG_ECLOCK_HZ
 EClock Hz
 ;
-MSG_RAMSEY_REV
-Ramsey rev
+MSG_RAM_CONTROLLER
+RAM-vez.
 ;
-MSG_GARY_REV
-Gary rev
+MSG_DECODING
+Dekódolás
 ;
 MSG_CARD_SLOT
 Busztípus
@@ -137,10 +137,10 @@ MSG_DHRYSTONES
 Dhrystones
 ;
 MSG_MIPS
-Mips
+MIPS
 ;
 MSG_MFLOPS
-MFlops
+MFLOPS
 ;
 MSG_MEM_SPEED_UNIT
 MB/s
@@ -171,93 +171,93 @@ Te
 ; Memory view labels
 ;
 MSG_START_ADDRESS
-KEZDÖCÍM
+Kezdöcím
 ;
 MSG_END_ADDRESS
-VÉGCÍM
+Végcím
 ;
 MSG_TOTAL_SIZE
-TELJES MÉRET
+Teljes méret
 ;
 MSG_MEMORY_TYPE
-MEMÓRIATÍPUS
+Memóriatípus
 ;
 MSG_PRIORITY
-PRIORITÁS
+Prioritás
 ;
 MSG_LOWER_BOUND
-ALSÓ HATÁR
+Alsó határ
 ;
 MSG_UPPER_BOUND
-FELSÖ HATÁR
+Felsö határ
 ;
 MSG_FIRST_ADDRESS
-ELSÖ CIM
+Elsö cim
 ;
 MSG_AMOUNT_FREE
-SZABAD MEMÓRIA
+Szabad memória
 ;
 MSG_LARGEST_BLOCK
-LEGNAGYOBB BLOKK
+Legnagyobb blokk
 ;
 MSG_NUM_CHUNKS
-BLOKKSZÁM
+Blokkszám
 ;
 MSG_NODE_NAME
-CSOMÓPONTNÉV
+Csomópontnév
 ;
 MSG_MEMORY_SPEED
-MEMÓRIA SEBESSÉG
+Memória sebesség
 ;
 ; Drives view labels
 ;
 MSG_DISK_ERRORS
-LEMEZHIBÁK SZÁMA
+Lemezhibák száma
 ;
 MSG_UNIT_NUMBER
-EGYSÉG SZÁMA
+Egység száma
 ;
 MSG_DISK_STATE
-LEMEZÁLLAPOT
+Lemezállapot
 ;
 MSG_TOTAL_BLOCKS
-BLOKKOK ÖSSZESEN
+Blokkok összesen
 ;
 MSG_BLOCKS_USED
-HASZNÁLT BLOKKOK
+Használt blokkok
 ;
 MSG_BYTES_PER_BLOCK
-BÁJTOK BLOKKONKÉNT
+Bájtok blokkonként
 ;
 MSG_DISK_TYPE
-MEGHAJTÓTÍPUS
+Meghajtótípus
 ;
 MSG_VOLUME_NAME
-KÖTETNÉV
+Kötetnév
 ;
 MSG_DEVICE_NAME
-ESZKÖZNÉV
+Eszköznév
 ;
 MSG_SURFACES
-FELÜLETEK
+Felületek
 ;
 MSG_SECTORS_PER_SIDE
-SZEKTOROK OLDALANKÉNT
+Szektorok oldalanként
 ;
 MSG_RESERVED_BLOCKS
-FENNTARTOTT BLOKKOK
+Fenntartott blokkok
 ;
 MSG_LOWEST_CYLINDER
-ALSÓ CILINDER
+Alsó cilinder
 ;
 MSG_HIGHEST_CYLINDER
-FELSÖ CILINDER
+Felsö cilinder
 ;
 MSG_NUM_BUFFERS
-PUFFEREK SZÁMA
+Pufferek száma
 ;
 MSG_SPEED
-MEGHAJTÓ SEBESSÉGE
+Meghajtó sebessége
 ;
 MSG_DRIVES_NO_DRIVES_FOUND
 Nem találhatók meghajtók.
@@ -338,31 +338,31 @@ MSG_NA
 N/A
 ;
 MSG_NONE
-NINCS
+Nincs
 ;
 MSG_UNKNOWN
-ISMERETLEN
+Ismeretlen
 ;
 MSG_YES
-IGEN
+Igen
 ;
 MSG_NO
-NEM
+Nem
 ;
 MSG_ON
-BE
+Be
 ;
 MSG_OFF
-KI
+Ki
 ;
 MSG_IN_USE
-HASZNÁLATBAN
+Használatban
 ;
 MSG_CLOCK_FOUND
-ÓRAJEL TALÁLHATÓ
+Órajel található
 ;
 MSG_CLOCK_NOT_FOUND
-NEM TALÁLHATÓ
+Nem található
 ;
 MSG_DISK_OK
 Lemez rendben, olvas/ír
@@ -387,47 +387,47 @@ PCMCIA
 ; Zorro types
 ;
 MSG_ZORRO_II
-ZORRO II
+Zorro II
 ;
 MSG_ZORRO_III
-ZORRO III
+Zorro III
 ;
 ; Memory types
 ;
 MSG_CHIP_RAM
-CHIP RAM
+Chip RAM
 ;
 MSG_FAST_RAM
-FAST RAM
+Fast RAM
 ;
 MSG_SLOW_RAM
-SLOW RAM
+Slow RAM
 ;
 MSG_ROM
 ROM
 ;
 MSG_24BIT_RAM
-24BIT RAM
+24-bit RAM
 ;
 MSG_32BIT_RAM
-32BIT RAM
+32-bit RAM
 ;
 MSG_MEM_SPEED_HEADER
-CHIP  FAST  ROM
+Chip  Fast  ROM
 ;
 ; SCSI Types
 ;
 MSG_SCSI_TYPE_DISK
-LEMEZ
+Lemez
 ;
 MSG_SCSI_TYPE_TAPE
-SZALAG
+Szalag
 ;
 MSG_SCSI_TYPE_PRINTER
-NYOMTATÓ
+Nyomtató
 ;
 MSG_SCSI_TYPE_PROCESSOR
-PROCESSZOR
+Processzor
 ;
 MSG_SCSI_TYPE_WORM
 WORM
@@ -436,16 +436,16 @@ MSG_SCSI_TYPE_CDROM
 CD
 ;
 MSG_SCSI_TYPE_SCANNER
-LAPOLVASÓ
+Lapolvasó
 ;
 MSG_SCSI_TYPE_OPTICAL
-OPTIKAI
+Optikai
 ;
 MSG_SCSI_TYPE_CHANGER
-CDTÁR
+CDtár
 ;
 MSG_SCSI_TYPE_COMM
-KOMM
+Komm
 ;
 ; SCSI Versions
 ;
@@ -603,7 +603,7 @@ MSG_RAMSEY_WRAP
 Wrap
 ;
 MSG_RAMSEY_SIZE
-Ram-méret
+RAM-méret
 ;
 MSG_RAMSEY_SKIP
 Skip
@@ -612,28 +612,25 @@ MSG_RAMSEY_REFRESH
 Refresh
 ;
 MSG_1M
-1M-chips
+1Mx4 chipek
 ;
 MSG_256K
-256K-chips
+256Kx4 chipek
 ;
 MSG_GARY_A1000
 A1000
 ;
 MSG_GARY_A500
-GARY
+Gary
 ;
 MSG_GAYLE
-GAYLE
+Gayle
 ;
 MSG_FAT_GARY
-FAT GARY
+Fat Gary
 ;
 MSG_GARY_UNKNOWN
-ISMERETLEN
-;
-MSG_EXT_INFO
-További info A3000/4000-hez
+Ismeretlen
 ;
 MSG_NV_RAM
 NV-RAM (BattMem):
@@ -654,25 +651,25 @@ MSG_SYNC_TRANS
 Sync
 ;
 MSG_FAST_SYNC
-Gyors Sync
+Gyors sync
 ;
 MSG_QUEUING
 Sorbanállás
 ;
 MSG_SCSI_HOST_ID
-SCSI_ID
+SCSI ID
 ;
 MSG_LONG
-HOSSZÚ
+Hosszú
 ;
 MSG_SHORT
-RÖVID
+Rövid
 ;
 MSG_NCR_53C710
 NCR 53C710
 ;
 MSG_SDMAC
-SDMAC
+Super DMAC
 ;
 MSG_MSM6242B
 OKI MSM6242B
@@ -717,16 +714,16 @@ MSG_AGNUS_ALICE_NTSC
 Alice 8374
 ;
 MSG_AGNUS_ECS_2MB_PAL
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_2MB_NTSC
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_B_PAL
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_B_NTSC
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_PAL
 FatAgnus 8372 (ECS)
@@ -783,7 +780,7 @@ MSG_MMU_FLAGS7_HINT
 IND=Közvetett +=több jelzö
 ;
 MSG_SLOT_ZORRO
-ZORRO
+Zorro
 ;
 MSG_SOFTWARE_OVERVIEW
 ÁTTEKINT
@@ -822,4 +819,262 @@ Ismeretlen OS
 ;
 MSG_BUS_MHZ
 Bus MHz
+;
+;
+; Hardware clock page
+;
+MSG_HARDWARE_CLOCK
+ÓRA
+;
+MSG_RTC_DATE
+RTC dátum
+;
+MSG_RTC_TIME
+RTC idõ
+;
+MSG_NCR_53C770
+NCR 53C770
+;
+; Cache toggle button labels
+;
+MSG_BTN_ON
+BE
+;
+MSG_BTN_OFF
+KI
+;
+; Ramsey RAM geometry
+MSG_1MX1
+1Mx1 chipek
+;
+; DMA and SCSI controller details
+MSG_DMA_CHIP
+DMA-vezérlõ
+;
+MSG_DMA_VERSION
+Firmware
+;
+MSG_RESDMAC
+ReSDMAC
+;
+MSG_WD33C93_FAMILY
+WD33C93 család
+;
+; Optional WD SCSI check
+MSG_WD33C93
+WD33C93
+;
+MSG_WD33C93A
+WD33C93A
+;
+MSG_WD33C93B
+WD33C93B
+;
+MSG_WD_MICROCODE
+Mikrokód
+;
+MSG_WD_CLOCK
+SCSI órajel
+;
+MSG_WD_MODE
+I/O mód
+;
+MSG_WD_SYNC_OFFSET
+Szink./eltol.
+;
+MSG_WD_POLLED
+Lekérdezés
+;
+MSG_WD_BUS
+WD busz
+;
+MSG_WD_ASYNC
+Aszinkron
+;
+MSG_WD_BUSY
+A SCSI-vezérlõ foglalt; ellenõrzés kihagyva.
+;
+MSG_WD_UNAVAILABLE
+A WD-ellenõrzés nem érhetõ el ezen a konfiguráción.
+;
+MSG_WD_CLOCK_FAILED
+A WD órajele nem mérhetõ.
+;
+MSG_WD_RESTORE_FAILED
+WD-hiba. Lemezhasználat elõtt indítsa újra a gépet.
+;
+MSG_WD_FAILED
+A WD-ellenõrzés hibás; a vezérlõ visszaállítva.
+;
+; NCR SCSI configuration snapshot
+MSG_DMA_INTEGRATED
+Integrált
+;
+MSG_NCR_DMA_BURST
+DMA-löket
+;
+MSG_NCR_TRANSFERS
+%u átvitel
+;
+MSG_NCR_WIDTH
+Adatszélesség
+;
+MSG_NCR_PARITY
+Paritásell.
+;
+MSG_NCR_DOUBLER
+Órajelduplázó
+;
+;
+; Additional hardware details
+MSG_CHIP_ID
+Chip ID
+;
+MSG_PCMCIA_CARD
+PCMCIA kártya
+;
+MSG_PCMCIA_SLOT
+PCMCIA hely
+;
+MSG_PCMCIA_ACCESS
+Elérési idõ
+;
+MSG_AKIKO_C2P
+C2P (OS)
+;
+MSG_PPC_REVISION
+PPC revízió
+;
+MSG_PPC_BUS
+PPC busz MHz
+;
+MSG_PPC_RUNTIME
+PPC rendszer
+;
+MSG_HARDWARE_SCSI
+SCSI
+;
+; General titles, actions and list headings
+MSG_SOFTWARE_TITLE
+Szoftver
+;
+MSG_HARDWARE_TITLE
+Hardver
+;
+MSG_CHIPSET_TITLE
+Chipset
+;
+MSG_SPEED_TITLE
+Sebesség
+;
+MSG_MEMORY_TITLE
+Memória
+;
+MSG_DRIVES_TITLE
+Meghajtók
+;
+MSG_BOARDS_TITLE
+Bõvítõkártyák
+;
+MSG_PROJECT_MENU
+Projekt
+;
+MSG_ABOUT
+Névjegy...
+;
+MSG_ABOUT_MUI
+MUI névjegye...
+;
+MSG_RUN_BENCHMARKS
+Tesztek indítása
+;
+MSG_SAVE_REPORT
+Jelentés mentése...
+;
+MSG_QUIT
+Kilépés
+;
+MSG_SETTINGS_MENU
+Beállítások
+;
+MSG_MUI_SETTINGS
+MUI...
+;
+MSG_MEASURE_SPEED
+Sebességmérés
+;
+MSG_SCSI_DEVICES
+SCSI eszközök...
+;
+MSG_CLOSE
+Bezárás
+;
+MSG_RESULTS_TITLE
+Eredmények
+;
+MSG_NAME
+Név
+;
+MSG_LOCATION
+Hely
+;
+MSG_ADDRESS
+Cím
+;
+MSG_VERSION
+Verzió
+;
+MSG_SIZE
+Méret
+;
+MSG_DRIVE
+Meghajtó
+;
+MSG_VOLUME
+Kötet
+;
+MSG_REPORT_SAVED
+Jelentés mentve: %s
+;
+MSG_REPORT_SAVE_FAILED
+A jelentés mentése sikertelen
+;
+MSG_FONT_INVALID
+Hibás FONT érték. Formátum: FONT=név.méret.
+;
+MSG_FONT_UNAVAILABLE
+A kért betûtípus nem nyitható meg.
+;
+MSG_FONT_TOO_LARGE
+A betûtípus túllépi a 8 x 8 képpontos korlátot.
+;
+MSG_FONT_FALLBACK
+A topaz.8 betûtípus lesz használva.
+;
+MSG_ECLOCK
+EClock
+;
+MSG_REPORT_OPEN
+Jelentés...
+;
+MSG_REPORT_TITLE
+Rendszerjelentés
+;
+MSG_REPORT_WHICH
+WhichAmiga
+;
+MSG_REPORT_BRIEF
+Rövid
+;
+MSG_REPORT_FULL
+Teljes
+;
+MSG_REPORT_SAVE_AS
+Mentés másként...
+;
+MSG_REPORT_FAILED
+Nem sikerült létrehozni a jelentés elõnézetét
+;
+MSG_BTN_REPORT
+RIPORT
 ;

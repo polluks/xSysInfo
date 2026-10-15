@@ -14,10 +14,10 @@ MSG_CONTACT_LABEL
 Contacto:
 ;
 MSG_SYSTEM_SOFTWARE
-SOFTWARE DO SISTEMA INSTALADO
+SOFTWARE DO SISTEMA
 ;
 MSG_INTERNAL_HARDWARE
-INFORMAÇÃO DE HARDWARE
+HARDWARE
 ;
 MSG_SPEED_COMPARISONS
 COMPARAÇÕES DE VELOCIDADE
@@ -83,19 +83,19 @@ MSG_COMMENT
 Comentário
 ;
 MSG_HORIZ_KHZ
-Horiz KHz
+Horiz kHz
 ;
 MSG_ECLOCK_HZ
 EClock Hz
 ;
-MSG_RAMSEY_REV
-Rev. Ramsey
+MSG_RAM_CONTROLLER
+Ctrl. RAM
 ;
-MSG_GARY_REV
-Rev. Gary
+MSG_DECODING
+Descodif.
 ;
 MSG_CARD_SLOT
-Slot de Cartão
+Slot
 ;
 MSG_VERT_HZ
 Vert Hz
@@ -125,10 +125,10 @@ MSG_DHRYSTONES
 Dhrystones
 ;
 MSG_MIPS
-Mips
+MIPS
 ;
 MSG_MFLOPS
-MFlops
+MFLOPS
 ;
 MSG_MEM_SPEED_UNIT
 MB/s
@@ -155,91 +155,91 @@ MSG_REF_YOU
 Você
 ;
 MSG_START_ADDRESS
-ENDEREÇO INICIAL
+Endereço inicial
 ;
 MSG_END_ADDRESS
-ENDEREÇO FINAL
+Endereço final
 ;
 MSG_TOTAL_SIZE
-TAMANHO TOTAL
+Tamanho total
 ;
 MSG_MEMORY_TYPE
-TIPO DE MEMÓRIA
+Tipo de memória
 ;
 MSG_PRIORITY
-PRIORIDADE
+Prioridade
 ;
 MSG_LOWER_BOUND
-LIMITE INFERIOR
+Limite inferior
 ;
 MSG_UPPER_BOUND
-LIMITE SUPERIOR
+Limite superior
 ;
 MSG_FIRST_ADDRESS
-PRIMEIRO ENDEREÇO
+Primeiro endereço
 ;
 MSG_AMOUNT_FREE
-QUANTIDADE LIVRE
+Quantidade livre
 ;
 MSG_LARGEST_BLOCK
-MAIOR BLOCO
+Maior bloco
 ;
 MSG_NUM_CHUNKS
-NÚMERO DE BLOCOS
+Número de blocos
 ;
 MSG_NODE_NAME
-NOME DO NÓ
+Nome do nó
 ;
 MSG_MEMORY_SPEED
-VELOCIDADE DA MEMÓRIA
+Velocidade da memória
 ;
 MSG_DISK_ERRORS
-NÚMERO DE ERROS DE DISCO
+Número de erros de disco
 ;
 MSG_UNIT_NUMBER
-NÚMERO DE UNIDADE
+Número de unidade
 ;
 MSG_DISK_STATE
-ESTADO DO DISCO
+Estado do disco
 ;
 MSG_TOTAL_BLOCKS
-NÚMERO TOTAL DE BLOCOS
+Número total de blocos
 ;
 MSG_BLOCKS_USED
-TOTAL DE BLOCOS UTILIZADOS
+Total de blocos utilizados
 ;
 MSG_BYTES_PER_BLOCK
-BYTES POR BLOCO
+Bytes por bloco
 ;
 MSG_DISK_TYPE
-TIPO DE UNIDADE/DISCO
+Tipo de unidade/disco
 ;
 MSG_VOLUME_NAME
-NOME DO VOLUME
+Nome do volume
 ;
 MSG_DEVICE_NAME
-NOME DO DISPOSITIVO
+Nome do dispositivo
 ;
 MSG_SURFACES
-SUPERFÍCIES
+Superfícies
 ;
 MSG_SECTORS_PER_SIDE
-SECTORES POR LADO
+Sectores por lado
 ;
 MSG_RESERVED_BLOCKS
-BLOCOS RESERVADOS
+Blocos reservados
 ;
 MSG_LOWEST_CYLINDER
-CILINDRO MAIS BAIXO
+Cilindro mais baixo
 ;
 MSG_HIGHEST_CYLINDER
-CILINDRO MAIS ALTO
+Cilindro mais alto
 ;
 MSG_NUM_BUFFERS
-NÚMERO DE BUFFERS
+Número de buffers
 ;
 MSG_SPEED
-VELOCIDADE DA UNIDADE
+Velocidade da unidade
 ;
 MSG_DRIVES_NO_DRIVES_FOUND
 Nenhuma unidade encontrada.
@@ -314,31 +314,31 @@ MSG_NA
 N/D
 ;
 MSG_NONE
-NENHUM
+Nenhum
 ;
 MSG_UNKNOWN
-DESCONHECIDO
+Desconhecido
 ;
 MSG_YES
-SIM
+Sim
 ;
 MSG_NO
-NÃO
+Não
 ;
 MSG_ON
-LIGADO
+Ligado
 ;
 MSG_OFF
-DESLIGADO
+Desligado
 ;
 MSG_IN_USE
-EM USO
+Em uso
 ;
 MSG_CLOCK_FOUND
-RELÓGIO ENCONTRADO
+Relógio encontrado
 ;
 MSG_CLOCK_NOT_FOUND
-NÃO ENCONTRADO
+Não encontrado
 ;
 MSG_DISK_OK
 Disco OK, Leitura/Escrita
@@ -359,43 +359,43 @@ MSG_SLOT_PCMCIA
 PCMCIA
 ;
 MSG_ZORRO_II
-ZORRO II
+Zorro II
 ;
 MSG_ZORRO_III
-ZORRO III
+Zorro III
 ;
 MSG_CHIP_RAM
-CHIP RAM
+Chip RAM
 ;
 MSG_FAST_RAM
-FAST RAM
+Fast RAM
 ;
 MSG_SLOW_RAM
-SLOW RAM
+Slow RAM
 ;
 MSG_ROM
 ROM
 ;
 MSG_24BIT_RAM
-RAM 24BIT
+RAM 24-bit
 ;
 MSG_32BIT_RAM
-RAM 32BIT
+RAM 32-bit
 ;
 MSG_MEM_SPEED_HEADER
-CHIP  FAST  ROM
+Chip  Fast  ROM
 ;
 MSG_SCSI_TYPE_DISK
-DISCO
+Disco
 ;
 MSG_SCSI_TYPE_TAPE
-FITA
+Fita
 ;
 MSG_SCSI_TYPE_PRINTER
-IMPRESSORA
+Impressora
 ;
 MSG_SCSI_TYPE_PROCESSOR
-PROCESSADOR
+Processador
 ;
 MSG_SCSI_TYPE_WORM
 WORM
@@ -404,16 +404,16 @@ MSG_SCSI_TYPE_CDROM
 CD
 ;
 MSG_SCSI_TYPE_SCANNER
-SCANNER
+Scanner
 ;
 MSG_SCSI_TYPE_OPTICAL
-OPTICAL
+Optical
 ;
 MSG_SCSI_TYPE_CHANGER
-CHANGER
+Changer
 ;
 MSG_SCSI_TYPE_COMM
-COMM
+Comm
 ;
 MSG_SCSI_VER_1
 SCSI-1
@@ -548,7 +548,7 @@ MSG_SDMAC_REV
 Chip SCSI
 ;
 MSG_RAMSEY_PAGE
-Modo de página
+Modo página
 ;
 MSG_RAMSEY_BURST
 Burst
@@ -566,28 +566,25 @@ MSG_RAMSEY_REFRESH
 Refresh
 ;
 MSG_1M
-Chips 1M
+Chips 1Mx4
 ;
 MSG_256K
-Chips 256K
+Chips 256Kx4
 ;
 MSG_GARY_A1000
 A1000
 ;
 MSG_GARY_A500
-GARY
+Gary
 ;
 MSG_GAYLE
-GAYLE
+Gayle
 ;
 MSG_FAT_GARY
-FAT GARY
+Fat Gary
 ;
 MSG_GARY_UNKNOWN
-DESCONHECIDO
-;
-MSG_EXT_INFO
-Informação adicional para A3000/4000
+Desconhecido
 ;
 MSG_NV_RAM
 NV-RAM (BattMem):
@@ -608,25 +605,25 @@ MSG_SYNC_TRANS
 Síncrono
 ;
 MSG_FAST_SYNC
-Sync Rápido
+Sync rápido
 ;
 MSG_QUEUING
 Fila de espera
 ;
 MSG_SCSI_HOST_ID
-SCSI_ID
+SCSI ID
 ;
 MSG_LONG
-LONGO
+Longo
 ;
 MSG_SHORT
-CURTO
+Curto
 ;
 MSG_NCR_53C710
 NCR 53C710
 ;
 MSG_SDMAC
-SDMAC
+Super DMAC
 ;
 MSG_MSM6242B
 OKI MSM6242B
@@ -662,7 +659,7 @@ MSG_DENISE_SAGA
 SAGA
 ;
 MSG_DENISE_UNKNOWN
-Denise desconhecida
+Denise desconhec.
 ;
 MSG_AGNUS_ALICE_PAL
 Alice 8374
@@ -671,16 +668,16 @@ MSG_AGNUS_ALICE_NTSC
 Alice 8374
 ;
 MSG_AGNUS_ECS_2MB_PAL
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_2MB_NTSC
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_B_PAL
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_B_NTSC
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_PAL
 FatAgnus 8372 (ECS)
@@ -725,7 +722,7 @@ MSG_MMU_FLAGS3_HINT
 IM=Impreciso NS=não-serie CB=CopyBack
 ;
 MSG_MMU_FLAGS4_HINT
-SO=Supervisor BL=Vazio SH=Partilhado INV=Inválido
+SO=Supervisor BL=Vazio SH=Partilh. INV=Inválido
 ;
 MSG_MMU_FLAGS5_HINT
 SNG=Página Única RP=Reparável IO=EspaçoIO
@@ -737,7 +734,7 @@ MSG_MMU_FLAGS7_HINT
 IND=Indireto +=mais flags
 ;
 MSG_SLOT_ZORRO
-ZORRO
+Zorro
 ;
 MSG_SOFTWARE_OVERVIEW
 RESUMO
@@ -776,4 +773,262 @@ SO desconhecido
 ;
 MSG_BUS_MHZ
 Bus MHz
+;
+;
+; Hardware clock page
+;
+MSG_HARDWARE_CLOCK
+RELÓGIO
+;
+MSG_RTC_DATE
+Data RTC
+;
+MSG_RTC_TIME
+Hora RTC
+;
+MSG_NCR_53C770
+NCR 53C770
+;
+; Cache toggle button labels
+;
+MSG_BTN_ON
+LIGADO
+;
+MSG_BTN_OFF
+DESLIGADO
+;
+; Ramsey RAM geometry
+MSG_1MX1
+Chips 1Mx1
+;
+; DMA and SCSI controller details
+MSG_DMA_CHIP
+Chip DMA
+;
+MSG_DMA_VERSION
+Firmware
+;
+MSG_RESDMAC
+ReSDMAC
+;
+MSG_WD33C93_FAMILY
+Família WD33C93
+;
+; Optional WD SCSI check
+MSG_WD33C93
+WD33C93
+;
+MSG_WD33C93A
+WD33C93A
+;
+MSG_WD33C93B
+WD33C93B
+;
+MSG_WD_MICROCODE
+Microcódigo
+;
+MSG_WD_CLOCK
+Relógio SCSI
+;
+MSG_WD_MODE
+Modo E/S
+;
+MSG_WD_SYNC_OFFSET
+Sync / offset
+;
+MSG_WD_POLLED
+Consulta
+;
+MSG_WD_BUS
+Bus WD
+;
+MSG_WD_ASYNC
+Assíncrono
+;
+MSG_WD_BUSY
+Controlador SCSI ocupado; verificação ignorada.
+;
+MSG_WD_UNAVAILABLE
+Verificação WD indisponível para esta configuração.
+;
+MSG_WD_CLOCK_FAILED
+Não foi possível medir o relógio WD.
+;
+MSG_WD_RESTORE_FAILED
+Falha no restauro WD. Reinicie antes de usar discos.
+;
+MSG_WD_FAILED
+Falha na verificação WD; controlador restaurado.
+;
+; NCR SCSI configuration snapshot
+MSG_DMA_INTEGRATED
+Integrado
+;
+MSG_NCR_DMA_BURST
+Rajada DMA
+;
+MSG_NCR_TRANSFERS
+%u transf.
+;
+MSG_NCR_WIDTH
+Larg. dados
+;
+MSG_NCR_PARITY
+Verif. parid.
+;
+MSG_NCR_DOUBLER
+Duplic. clock
+;
+;
+; Additional hardware details
+MSG_CHIP_ID
+ID do chip
+;
+MSG_PCMCIA_CARD
+Cartão PCMCIA
+;
+MSG_PCMCIA_SLOT
+Slot PCMCIA
+;
+MSG_PCMCIA_ACCESS
+Tempo acesso
+;
+MSG_AKIKO_C2P
+C2P (SO)
+;
+MSG_PPC_REVISION
+Revisão PPC
+;
+MSG_PPC_BUS
+Bus PPC MHz
+;
+MSG_PPC_RUNTIME
+Sistema PPC
+;
+MSG_HARDWARE_SCSI
+SCSI
+;
+; General titles, actions and list headings
+MSG_SOFTWARE_TITLE
+Software
+;
+MSG_HARDWARE_TITLE
+Hardware
+;
+MSG_CHIPSET_TITLE
+Chipset
+;
+MSG_SPEED_TITLE
+Velocidade
+;
+MSG_MEMORY_TITLE
+Memória
+;
+MSG_DRIVES_TITLE
+Unidades
+;
+MSG_BOARDS_TITLE
+Placas
+;
+MSG_PROJECT_MENU
+Projeto
+;
+MSG_ABOUT
+Sobre...
+;
+MSG_ABOUT_MUI
+Sobre o MUI...
+;
+MSG_RUN_BENCHMARKS
+Executar testes
+;
+MSG_SAVE_REPORT
+Guardar relatório...
+;
+MSG_QUIT
+Sair
+;
+MSG_SETTINGS_MENU
+Definições
+;
+MSG_MUI_SETTINGS
+MUI...
+;
+MSG_MEASURE_SPEED
+Medir velocidade
+;
+MSG_SCSI_DEVICES
+Dispositivos SCSI...
+;
+MSG_CLOSE
+Fechar
+;
+MSG_RESULTS_TITLE
+Resultados
+;
+MSG_NAME
+Nome
+;
+MSG_LOCATION
+Localização
+;
+MSG_ADDRESS
+Endereço
+;
+MSG_VERSION
+Versão
+;
+MSG_SIZE
+Tamanho
+;
+MSG_DRIVE
+Unidade
+;
+MSG_VOLUME
+Volume
+;
+MSG_REPORT_SAVED
+Relatório guardado em %s
+;
+MSG_REPORT_SAVE_FAILED
+Não foi possível guardar o relatório
+;
+MSG_FONT_INVALID
+Valor FONT inválido. Use FONT=nome.tamanho.
+;
+MSG_FONT_UNAVAILABLE
+Não foi possível abrir a fonte pedida.
+;
+MSG_FONT_TOO_LARGE
+A fonte excede o limite de 8 x 8 píxeis.
+;
+MSG_FONT_FALLBACK
+A usar topaz.8.
+;
+MSG_ECLOCK
+EClock
+;
+MSG_REPORT_OPEN
+Relatório...
+;
+MSG_REPORT_TITLE
+Relatório do sistema
+;
+MSG_REPORT_WHICH
+WhichAmiga
+;
+MSG_REPORT_BRIEF
+Breve
+;
+MSG_REPORT_FULL
+Completo
+;
+MSG_REPORT_SAVE_AS
+Guardar como...
+;
+MSG_REPORT_FAILED
+Não foi possível criar a pré-visualização
+;
+MSG_BTN_REPORT
+RELAT.
 ;

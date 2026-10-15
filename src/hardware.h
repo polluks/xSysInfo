@@ -37,6 +37,8 @@
 #define CUSTOM_JOY0DAT_MIRR  0xDAF00A
 #define CUSTOM_JOY1DAT   0xDFF00C
 #define CUSTOM_JOY1DAT_MIRR  0xDAF00C
+#define CUSTOM_INTENAR   0xDFF01C
+#define CUSTOM_INTENAR_MIRR  0xDAF01C
 #define CUSTOM_PAULA_ID  0xDFF016
 #define CUSTOM_DENISE_ID  0xDFF07C
 #define CUSTOM_VPOSR    0xDFF004
@@ -46,12 +48,16 @@
 #define FAT_GARY_POWER_REG 0xDE0002
 #define FAT_GARY_POWER_CYCLE 0x80
 #define FAT_GARY_POWER_GOOD 0x0
-#define FAT_GARY_TIME_OUT_REG 0xDE0000
-#define FAT_GARY_TIME_OUT_DSACK 0x0
-#define FAT_GARY_TIME_OUT_BERR 0x80
 #define SDMAC_ISTR      ((volatile uint8_t *)0xDD001F)
 #define SDMAC_WTC       ((volatile uint32_t *)0xDD0004)
+#define SDMAC_WD_ASR    ((volatile uint8_t *)0xDD0049)
+#define WD_ASR_RESERVED 0x0c
+#define WD_ASR_ACTIVE   0xb1 /* INT, BSY, CIP, DBR */
 #define NCR_CTEST8_REG 0x00DD0061
+/* The A4000T 53C770 register bank starts at $DD0000, not $DD0040. */
+#define NCR770_CTEST3_REG 0x00DD0018
+#define NCR770_GPCNTL_REG 0x00DD0044
+#define NCR770_MACNTL_REG 0x00DD0045
 
 #ifndef AFB_68080
 /*
@@ -109,6 +115,13 @@ typedef enum {
     MMU_UNKNOWN
 } MMUType;
 
+/* Paged translation only; transparent cache attributes are independent. */
+typedef enum {
+    MMU_TRANSLATION_UNKNOWN = -1,
+    MMU_TRANSLATION_DISABLED = 0,
+    MMU_TRANSLATION_ENABLED = 1
+} MMUTranslationState;
+
 /* Agnus/Alice types */
 typedef enum {
     AGNUS_UNKNOWN,
@@ -164,6 +177,13 @@ typedef enum{
     FAT_GARY
 }GaryType;
 
+/* Onboard A4000T SCSI controller */
+typedef enum {
+    NCR_NONE,
+    NCR_53C710,
+    NCR_53C770
+} NCRType;
+
 /* Native graphics capabilities enabled by graphics.library */
 typedef enum {
     NATIVE_GRAPHICS_OCS,
@@ -181,6 +201,11 @@ typedef struct {
     ULONG bus_mhz;          /* Measured motherboard MHz * 100; 0 unavailable */
     char cpu_string[32];
 
+    /* PPC information supplied by a running PowerUP/WarpOS kernel. */
+    BOOL ppc_present;
+    ULONG ppc_revision, ppc_mhz, ppc_bus_mhz;
+    char ppc_string[24], ppc_runtime[48];
+
     /* FPU */
     FPUType fpu_type;
     BOOL fpu_enabled;
@@ -189,7 +214,8 @@ typedef struct {
 
     /* MMU */
     MMUType mmu_type;
-    BOOL mmu_enabled;
+    BOOL mmu_present;
+    MMUTranslationState mmu_translation;
     char mmu_string[32];
 
     /* VBR */
@@ -221,6 +247,12 @@ typedef struct {
     PaulaType paula_type;
     UWORD paula_rev;
 
+    BOOL akiko_present;
+    ULONG akiko_id;
+    BOOL akiko_c2p_enabled;
+    BOOL gayle_pcmcia_valid;
+    UBYTE gayle_pcmcia_status, gayle_pcmcia_config;
+
     /* Clock */
     ClockType clock_type;
     char clock_string[32];
@@ -229,15 +261,20 @@ typedef struct {
     unsigned char gary_rev;         /* 0 = not present */
     unsigned char ramsey_rev;       /* 0 = not present */
     unsigned char ramsey_ctl;
-    unsigned char sdmac_rev;         /* 0 = not present */
+    unsigned char sdmac_rev;        /* 0 = revision not determined */
+    unsigned char ncr_rev;          /* NCR revision 0 is valid */
+    BOOL sdmac_present;
+    ULONG resdmac_version;          /* ASCII vN.N, or 0 for original SDMAC */
     GaryType gary_type;
 
-    BOOL is_A4000T;
+    NCRType ncr_type;
+    struct {
+        UBYTE scid, sxfer, scntl0, scntl1, dmode, scntl3, stest1;
+    } ncr_config;
 
     BOOL ramsey_page_enabled;
     BOOL ramsey_burst_enabled;
     BOOL ramsey_wrap_enabled;
-    BOOL ramsey_size_1M;
     BOOL ramsey_skip_enabled;
     ULONG ramsey_refresh_rate;     /* 0 = 156, 1 = 240, 2 = 372 clocks, 3 = off */
 
@@ -270,7 +307,7 @@ typedef struct {
     UWORD kickstart_revision;
     UWORD kickstart_patch_version;
     UWORD kickstart_patch_revision;
-    ULONG kickstart_size;
+    ULONG kickstart_size;         /* KiB, including mapped ROM extensions */
 
 } HardwareInfo;
 
@@ -285,7 +322,9 @@ void refresh_cache_status(void);
 BOOL detect_emu68_systems(void);
 void detect_amiga_model(void);
 void detect_cpu(void);
+void detect_ppc(void);
 void detect_fpu(void);
+struct Library *open_mmu_library(void);
 void detect_mmu(void);
 void load_mmu_remap_table(void);
 APTR mmu_physical_address(APTR addr);
@@ -299,6 +338,15 @@ void detect_gary(void);
 void detect_ramsey(void);
 void format_ramsey_rev_string(char *buffer, ULONG size);
 void detect_sdmac(void);
+void format_dma_string(char *buffer, ULONG size);
+void format_scsi_chip_string(char *buffer, ULONG size);
+enum {
+    NCR_DETAIL_ID, NCR_DETAIL_BURST, NCR_DETAIL_SYNC, NCR_DETAIL_WIDTH,
+    NCR_DETAIL_PARITY, NCR_DETAIL_DOUBLER, NCR_DETAIL_COUNT
+};
+void format_ncr_detail(unsigned detail, char *buffer, ULONG size);
+void format_resdmac_version(char *buffer, ULONG size);
+const char *get_ramsey_size_string(void);
 void detect_system_chips(void);
 void detect_frequencies(void);
 void detect_kickstart(void);

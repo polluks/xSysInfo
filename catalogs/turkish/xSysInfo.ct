@@ -16,10 +16,10 @@ Iletisim:
 ; Section headers
 ;
 MSG_SYSTEM_SOFTWARE
-YUKLU SISTEM YAZILIMI
+SISTEM YAZILIMI
 ;
 MSG_INTERNAL_HARDWARE
-DONANIM BILGISI
+DONANIM
 ;
 MSG_SPEED_COMPARISONS
 HIZ KARSILASTIRMALARI
@@ -91,16 +91,16 @@ MSG_COMMENT
 Yorum
 ;
 MSG_HORIZ_KHZ
-Yatay KHz
+Yatay kHz
 ;
 MSG_ECLOCK_HZ
 EClock Hz
 ;
-MSG_RAMSEY_REV
-Ramsey Rev
+MSG_RAM_CONTROLLER
+RAM denet.
 ;
-MSG_GARY_REV
-Gary Rev
+MSG_DECODING
+Kod çözme
 ;
 MSG_CARD_SLOT
 Kart Yuvasi
@@ -137,10 +137,10 @@ MSG_DHRYSTONES
 Dhrystones
 ;
 MSG_MIPS
-Mips
+MIPS
 ;
 MSG_MFLOPS
-MFlops
+MFLOPS
 ;
 MSG_MEM_SPEED_UNIT
 MB/s
@@ -171,93 +171,93 @@ Sen
 ; Memory view labels
 ;
 MSG_START_ADDRESS
-BASLANGIC ADRESI
+Baslangic adresi
 ;
 MSG_END_ADDRESS
-BITIS ADRESI
+Bitis adresi
 ;
 MSG_TOTAL_SIZE
-TOPLAM BOYUT
+Toplam boyut
 ;
 MSG_MEMORY_TYPE
-BELLEK TURU
+Bellek turu
 ;
 MSG_PRIORITY
-ONCELIK
+Oncelik
 ;
 MSG_LOWER_BOUND
-ALT SINIR
+Alt sinir
 ;
 MSG_UPPER_BOUND
-UST SINIR
+Ust sinir
 ;
 MSG_FIRST_ADDRESS
-ILK ADRES
+Ilk adres
 ;
 MSG_AMOUNT_FREE
-BOS MIKTAR
+Bos miktar
 ;
 MSG_LARGEST_BLOCK
-EN BUYUK BLOK
+En buyuk blok
 ;
 MSG_NUM_CHUNKS
-PARCA SAYISI
+Parca sayisi
 ;
 MSG_NODE_NAME
-DUGUM ADI
+Dugum adi
 ;
 MSG_MEMORY_SPEED
-BELLEK HIZI
+Bellek hizi
 ;
 ; Drives view labels
 ;
 MSG_DISK_ERRORS
-DISK HATA SAYISI
+Disk hata sayisi
 ;
 MSG_UNIT_NUMBER
-BIRIM NUMARASI
+Birim numarasi
 ;
 MSG_DISK_STATE
-DISK DURUMU
+Disk durumu
 ;
 MSG_TOTAL_BLOCKS
-TOPLAM BLOK SAYISI
+Toplam blok sayisi
 ;
 MSG_BLOCKS_USED
-KULLANILAN BLOKLAR
+Kullanilan bloklar
 ;
 MSG_BYTES_PER_BLOCK
-BLOK BASINA BAYT
+Blok basina bayt
 ;
 MSG_DISK_TYPE
-SURUCU/DISK TURU
+Surucu/disk turu
 ;
 MSG_VOLUME_NAME
-BIRIM ADI
+Birim adi
 ;
 MSG_DEVICE_NAME
-AYGIT ADI
+Aygit adi
 ;
 MSG_SURFACES
-YUZEYLER
+Yuzeyler
 ;
 MSG_SECTORS_PER_SIDE
-YUZ BASINA SEKTOR
+Yuz basina sektor
 ;
 MSG_RESERVED_BLOCKS
-AYRILMIS BLOKLAR
+Ayrilmis bloklar
 ;
 MSG_LOWEST_CYLINDER
-EN DUSUK SILINDIR
+En dusuk silindir
 ;
 MSG_HIGHEST_CYLINDER
-EN YUKSEK SILINDIR
+En yuksek silindir
 ;
 MSG_NUM_BUFFERS
-TAMPON SAYISI
+Tampon sayisi
 ;
 MSG_SPEED
-SURUCU HIZI
+Surucu hizi
 ;
 MSG_DRIVES_NO_DRIVES_FOUND
 Surucu bulunamadi.
@@ -338,31 +338,31 @@ MSG_NA
 YOK
 ;
 MSG_NONE
-YOK
+Yok
 ;
 MSG_UNKNOWN
-BILINMIYOR
+Bilinmiyor
 ;
 MSG_YES
-EVET
+Evet
 ;
 MSG_NO
-HAYIR
+Hayýr
 ;
 MSG_ON
-ACIK
+Açýk
 ;
 MSG_OFF
-KAPALI
+Kapalý
 ;
 MSG_IN_USE
-KULLANILIYOR
+Kullanýlýyor
 ;
 MSG_CLOCK_FOUND
-SAAT BULUNDU
+Saat bulundu
 ;
 MSG_CLOCK_NOT_FOUND
-BULUNAMADI
+Bulunamadý
 ;
 MSG_DISK_OK
 Disk OK, Okuma/Yazma
@@ -387,47 +387,47 @@ PCMCIA
 ; Zorro types
 ;
 MSG_ZORRO_II
-ZORRO II
+Zorro II
 ;
 MSG_ZORRO_III
-ZORRO III
+Zorro III
 ;
 ; Memory types
 ;
 MSG_CHIP_RAM
-CHIP RAM
+Chip RAM
 ;
 MSG_FAST_RAM
-FAST RAM
+Fast RAM
 ;
 MSG_SLOW_RAM
-SLOW RAM
+Slow RAM
 ;
 MSG_ROM
 ROM
 ;
 MSG_24BIT_RAM
-24BIT RAM
+24-bit RAM
 ;
 MSG_32BIT_RAM
-32BIT RAM
+32-bit RAM
 ;
 MSG_MEM_SPEED_HEADER
-CHIP  FAST  ROM
+Chip  Fast  ROM
 ;
 ; SCSI Types
 ;
 MSG_SCSI_TYPE_DISK
-DISK
+Disk
 ;
 MSG_SCSI_TYPE_TAPE
-TEYP
+Teyp
 ;
 MSG_SCSI_TYPE_PRINTER
-YAZICI
+Yazýcý
 ;
 MSG_SCSI_TYPE_PROCESSOR
-ISLEMCI
+Islemci
 ;
 MSG_SCSI_TYPE_WORM
 WORM
@@ -436,16 +436,16 @@ MSG_SCSI_TYPE_CDROM
 CD
 ;
 MSG_SCSI_TYPE_SCANNER
-TARAYICI
+Tarayýcý
 ;
 MSG_SCSI_TYPE_OPTICAL
-OPTIK
+Optik
 ;
 MSG_SCSI_TYPE_CHANGER
-DEGISTIRICI
+Degistirici
 ;
 MSG_SCSI_TYPE_COMM
-ILETISIM
+Iletisim
 ;
 ; SCSI Versions
 ;
@@ -612,28 +612,25 @@ MSG_RAMSEY_REFRESH
 Yenileme
 ;
 MSG_1M
-1M yongalar
+1Mx4 yongalar
 ;
 MSG_256K
-256K yongalar
+256Kx4 yongalar
 ;
 MSG_GARY_A1000
 A1000
 ;
 MSG_GARY_A500
-GARY
+Gary
 ;
 MSG_GAYLE
-GAYLE
+Gayle
 ;
 MSG_FAT_GARY
-FAT GARY
+Fat Gary
 ;
 MSG_GARY_UNKNOWN
-BILINMIYOR
-;
-MSG_EXT_INFO
-A3000/4000 icin ek bilgi
+Bilinmiyor
 ;
 MSG_NV_RAM
 NV-RAM (BattMem):
@@ -654,25 +651,25 @@ MSG_SYNC_TRANS
 Sync
 ;
 MSG_FAST_SYNC
-Fast Sync
+Fast sync
 ;
 MSG_QUEUING
 Kuyruklama
 ;
 MSG_SCSI_HOST_ID
-SCSI_ID
+SCSI ID
 ;
 MSG_LONG
-UZUN
+Uzun
 ;
 MSG_SHORT
-KISA
+Kýsa
 ;
 MSG_NCR_53C710
 NCR 53C710
 ;
 MSG_SDMAC
-SDMAC
+Super DMAC
 ;
 MSG_MSM6242B
 OKI MSM6242B
@@ -717,16 +714,16 @@ MSG_AGNUS_ALICE_NTSC
 Alice 8374
 ;
 MSG_AGNUS_ECS_2MB_PAL
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_2MB_NTSC
-FatAgnus 8375/72B (ECS)
+Agnus 8375/72B (ECS)
 ;
 MSG_AGNUS_ECS_B_PAL
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_B_NTSC
-FatAgnus 8372B/75 (ECS)
+Agnus 8372B/75 (ECS)
 ;
 MSG_AGNUS_ECS_PAL
 FatAgnus 8372 (ECS)
@@ -783,7 +780,7 @@ MSG_MMU_FLAGS7_HINT
 IND=Dolayli +=daha fazla bayrak
 ;
 MSG_SLOT_ZORRO
-ZORRO
+Zorro
 ;
 MSG_SOFTWARE_OVERVIEW
 GENEL
@@ -822,4 +819,262 @@ Bilinmeyen OS
 ;
 MSG_BUS_MHZ
 Bus MHz
+;
+;
+; Hardware clock page
+;
+MSG_HARDWARE_CLOCK
+SAAT
+;
+MSG_RTC_DATE
+RTC tarihi
+;
+MSG_RTC_TIME
+RTC saati
+;
+MSG_NCR_53C770
+NCR 53C770
+;
+; Cache toggle button labels
+;
+MSG_BTN_ON
+AÇIK
+;
+MSG_BTN_OFF
+KAPALI
+;
+; Ramsey RAM geometry
+MSG_1MX1
+1Mx1 yongalar
+;
+; DMA and SCSI controller details
+MSG_DMA_CHIP
+DMA yongasý
+;
+MSG_DMA_VERSION
+Aygýt yazýl.
+;
+MSG_RESDMAC
+ReSDMAC
+;
+MSG_WD33C93_FAMILY
+WD33C93 ailesi
+;
+; Optional WD SCSI check
+MSG_WD33C93
+WD33C93
+;
+MSG_WD33C93A
+WD33C93A
+;
+MSG_WD33C93B
+WD33C93B
+;
+MSG_WD_MICROCODE
+Mikrokod
+;
+MSG_WD_CLOCK
+SCSI saati
+;
+MSG_WD_MODE
+G/Ç modu
+;
+MSG_WD_SYNC_OFFSET
+Eþz./ofset
+;
+MSG_WD_POLLED
+Sorgulama
+;
+MSG_WD_BUS
+WD veriyolu
+;
+MSG_WD_ASYNC
+Asenkron
+;
+MSG_WD_BUSY
+SCSI denetleyicisi meþgul; kontrol atlandý.
+;
+MSG_WD_UNAVAILABLE
+Bu yapýlandýrmada WD kontrolü kullanýlamýyor.
+;
+MSG_WD_CLOCK_FAILED
+WD saat hýzý ölçülemedi.
+;
+MSG_WD_RESTORE_FAILED
+WD yüklenemedi. Diski kullanmadan yeniden baþlatýn.
+;
+MSG_WD_FAILED
+WD kontrolü baþarýsýz; denetleyici geri yüklendi.
+;
+; NCR SCSI configuration snapshot
+MSG_DMA_INTEGRATED
+Tümleþik
+;
+MSG_NCR_DMA_BURST
+DMA çoðuþma
+;
+MSG_NCR_TRANSFERS
+%u aktarým
+;
+MSG_NCR_WIDTH
+Veri geniþl.
+;
+MSG_NCR_PARITY
+Eþlik kontr.
+;
+MSG_NCR_DOUBLER
+Saat katlama
+;
+;
+; Additional hardware details
+MSG_CHIP_ID
+Yonga ID
+;
+MSG_PCMCIA_CARD
+PCMCIA kart
+;
+MSG_PCMCIA_SLOT
+PCMCIA yuva
+;
+MSG_PCMCIA_ACCESS
+Eriþim süresi
+;
+MSG_AKIKO_C2P
+C2P (OS)
+;
+MSG_PPC_REVISION
+PPC revizyon
+;
+MSG_PPC_BUS
+PPC veri MHz
+;
+MSG_PPC_RUNTIME
+PPC sistemi
+;
+MSG_HARDWARE_SCSI
+SCSI
+;
+; General titles, actions and list headings
+MSG_SOFTWARE_TITLE
+Yazýlým
+;
+MSG_HARDWARE_TITLE
+Donaným
+;
+MSG_CHIPSET_TITLE
+Yonga seti
+;
+MSG_SPEED_TITLE
+Hýz
+;
+MSG_MEMORY_TITLE
+Bellek
+;
+MSG_DRIVES_TITLE
+Sürücüler
+;
+MSG_BOARDS_TITLE
+Kartlar
+;
+MSG_PROJECT_MENU
+Proje
+;
+MSG_ABOUT
+Hakkýnda...
+;
+MSG_ABOUT_MUI
+MUI hakkýnda...
+;
+MSG_RUN_BENCHMARKS
+Performans testlerini çalýþtýr
+;
+MSG_SAVE_REPORT
+Raporu kaydet...
+;
+MSG_QUIT
+Çýkýþ
+;
+MSG_SETTINGS_MENU
+Ayarlar
+;
+MSG_MUI_SETTINGS
+MUI...
+;
+MSG_MEASURE_SPEED
+Hýzý ölç
+;
+MSG_SCSI_DEVICES
+SCSI aygýtlarý...
+;
+MSG_CLOSE
+Kapat
+;
+MSG_RESULTS_TITLE
+Sonuçlar
+;
+MSG_NAME
+Ad
+;
+MSG_LOCATION
+Konum
+;
+MSG_ADDRESS
+Adres
+;
+MSG_VERSION
+Sürüm
+;
+MSG_SIZE
+Boyut
+;
+MSG_DRIVE
+Sürücü
+;
+MSG_VOLUME
+Birim
+;
+MSG_REPORT_SAVED
+Rapor %s konumuna kaydedildi
+;
+MSG_REPORT_SAVE_FAILED
+Rapor kaydedilemedi
+;
+MSG_FONT_INVALID
+Geçersiz FONT deðeri. Biçim: FONT=ad.boyut.
+;
+MSG_FONT_UNAVAILABLE
+Ýstenen yazý tipi açýlamadý.
+;
+MSG_FONT_TOO_LARGE
+Yazý tipi 8 x 8 piksel sýnýrýný aþýyor.
+;
+MSG_FONT_FALLBACK
+topaz.8 kullanýlýyor.
+;
+MSG_ECLOCK
+EClock
+;
+MSG_REPORT_OPEN
+Rapor...
+;
+MSG_REPORT_TITLE
+Sistem raporu
+;
+MSG_REPORT_WHICH
+WhichAmiga
+;
+MSG_REPORT_BRIEF
+Kýsa
+;
+MSG_REPORT_FULL
+Tam
+;
+MSG_REPORT_SAVE_AS
+Farklý kaydet...
+;
+MSG_REPORT_FAILED
+Rapor önizlemesi oluþturulamadý
+;
+MSG_BTN_REPORT
+RAPOR
 ;

@@ -41,12 +41,6 @@ static inline void copy_string(char *dest, const char *src, size_t destsize)
     *dest = '\0';
 }
 
-/* Default font settings */
-#define DEFAULT_FONT_NAME   "topaz.font"
-#define DEFAULT_FONT_HEIGHT 8
-
-extern struct TextAttr Topaz8Font;
-
 /* Program name */
 #define XSYSINFO_NAME       "xSysInfo"
 /* Version information is coming from Makefile */
@@ -92,7 +86,9 @@ typedef enum {
     VIEW_MEMORY,
     VIEW_DRIVES,
     VIEW_BOARDS,
-    VIEW_SCSI
+    VIEW_BOARD_DETAILS,
+    VIEW_SCSI,
+    VIEW_REPORT
 } ViewMode;
 
 /* Software pages */
@@ -105,11 +101,13 @@ typedef enum {
     SOFTWARE_COUNT
 } SoftwareType;
 
-/* Software list types */
+/* Hardware pages */
 typedef enum {
     HARDWARE_STD,
     HARDWARE_CPU,
     HARDWARE_EXT,
+    HARDWARE_SCSI,
+    HARDWARE_CLOCK,
     HARDWARE_COUNT
 } HardwareType;
 
@@ -120,7 +118,7 @@ typedef enum {
     LOC_32BIT_RAM,
     LOC_24BIT_RAM,
     LOC_CHIP_RAM,
-    LOC_KICKSTART       /* Special: shows ROM size (256K/512K) */
+    LOC_KICKSTART       /* Special: shows total mapped ROM size in KiB */
 } MemoryLocation;
 
 /* Bar graph scale modes */
@@ -137,11 +135,13 @@ typedef enum {
     BOARD_DISPLAY_COUNT
 } BoardDisplay;
 
-/* Display mode (from tooltype or command line) */
+/* Display mode (from icon tooltype) */
 typedef enum {
     DISPLAY_AUTO,       /* Auto-detect based on screen resolution */
     DISPLAY_WINDOW,     /* Force window on Workbench */
-    DISPLAY_SCREEN      /* Force custom screen */
+    DISPLAY_SCREEN,     /* Force custom screen using the default monitor */
+    DISPLAY_PAL,        /* Force PAL HIRES custom screen (V36+) */
+    DISPLAY_NTSC        /* Force NTSC HIRES custom screen (V36+) */
 } DisplayMode;
 
 /* Global application context */
@@ -152,7 +152,7 @@ typedef struct {
     struct RastPort *rp;            /* RastPort for drawing */
     struct TextFont *tf;            /* Current font */
     BOOL use_custom_screen;         /* TRUE if we opened our own screen */
-    BOOL is_pal;                    /* TRUE if PAL system */
+    BOOL is_pal;                    /* TRUE if PAL display timing */
     BOOL dark_mode;                 /* TRUE if DARK palette is requested */
     UWORD screen_height;            /* Actual screen height (200 or 256) */
     DisplayMode display_mode;       /* Requested display mode */
@@ -187,6 +187,7 @@ typedef struct {
     LONG drive_count;               /* Total drives */
 
     /* Boards view state */
+    LONG selected_board;            /* Board shown in the details view */
     LONG board_scroll;              /* Scroll offset */
     LONG board_count;               /* Total boards */
     BoardDisplay board_display;     /* Names, decimal IDs, or hexadecimal IDs */

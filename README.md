@@ -9,15 +9,22 @@
 ## Features
 
 *   **Detailed Hardware Information**: Get in-depth reports on your CPU, memory, drives (including SCSI), expansion boards, and cache.
+*   **Clock and Battery Memory**: View the hardware clock date/time, updated once per second on the Clock page, plus available NV-RAM settings. Dates use YYYY-MM-DD and times use the 24-hour format.
 *   **Software Environment Overview**: View details about your AmigaOS software setup.
 *   **Benchmarking**: Includes Dhrystone benchmarks to assess your system's performance.
 *   **Graphical User Interface (GUI)**: User-friendly interface for easy navigation and information display.
-*   **Printing Support**: Print out system reports for documentation or sharing (For now, the output is saved to a file in RAM:)
+*   **Report Preview**: View WhichAmiga, brief or full system reports inside xSysInfo, then save the displayed text.
 *   **Localization**: Supports multiple languages for its interface.
 
 ## Building `xSysInfo`
 
-To build `xSysInfo`, you will need a GCC cross-compiler for m68k-amigaos (e.g., `m68k-amigaos-gcc`). The build process also requires `make`, `curl`, `md5sum`, `lha`, Python 3, `patch`, and `vasmm68k_mot` (VASM) to handle external dependencies and assemble the PCI database.
+To build `xSysInfo`, you will need a GCC cross-compiler for m68k-amigaos (e.g., `m68k-amigaos-gcc`). The build process also requires `make`, `curl`, `md5sum`, `lha`, Python 3, and `vasmm68k_mot` (VASM) to handle external dependencies and assemble the PCI database.
+
+Building Identify also requires `vc` with its `+kick13` configuration,
+`vlink`, and the Amiga NDK headers and libraries. If `vasmppc_std` is
+missing, the Makefile builds it from pinned sources using a host C compiler
+and `tar`. The standard amiga-gcc toolchain layout is used by default;
+`NDK_PATH` and `NDK_LIB_PATH` can override the NDK locations.
 
 1.  **Clone the repository**:
     ```bash
@@ -49,6 +56,12 @@ Start `xSysInfo` from its Workbench icon or run it from the Shell on a real
 Amiga or emulator. With no command-line options, it opens the graphical
 interface.
 
+**NOTE:** Without `identify.library`, Amiga model identification, Zorro
+board names and PCI device listings are unavailable. OS name and RTG
+graphics system detection are also limited. CPU/FPU and chipset details,
+memory and drive information, and benchmarks remain available.
+Install `identify.library` in `LIBS:`. It is included on the bootable ADF.
+
 ### Command-line options
 
 Use `xSysInfo [options]`. Options are case-insensitive keywords, entered
@@ -60,7 +73,23 @@ without a leading dash.
 | `FULL` | Run CPU, memory, and drive benchmarks and write the complete text report to Shell output. |
 | `WHICH` | Write a column-aligned system report compatible with the WhichAmiga 1.3.3 text format to Shell output. |
 | `DARK` | Use the dark blue palette in the graphical interface. The default is the gray palette. |
-| `DEBUG` | Enable diagnostic output. Debugging is off by default. |
+| `MUI` | Use the MUI interface if MUI 3.8 or newer is installed; otherwise the regular graphical interface opens. |
+| `DEBUG` | Write diagnostics to Shell output, supporting redirection. Debugging is off by default. |
+| `SCSI` | Check the A3000 WD SCSI controller at startup. Disabled by default; see below before enabling it. |
+
+**REPORT** in the classic interface, or **Report...** in MUI, opens a
+read-only preview. Choose
+**WhichAmiga** for the compatible output, **Brief** for hardware, OS, memory,
+boards and benchmark results, or **Full** for the detailed report and lists.
+Brief is the initial selection; the last choice is remembered for the session.
+Opening a preview uses the current results without running benchmarks.
+**Save as...** saves exactly that preview, defaulting to `RAM:xsysinfo.txt`.
+Close and reopen the preview to include subsequent measurements.
+
+In the classic interface, use the scrollbar, cursor keys or Prev/Next to
+scroll vertically. Long lines are clipped at the right edge of the preview.
+Shift+Up/Down scrolls a page. Q returns to the main screen; S opens Save as.
+The MUI preview has vertical and horizontal scrollbars.
 
 `BRIEF`, `FULL`, and `WHICH` run without opening the graphical interface.
 If more than one report mode is supplied, `FULL` takes precedence over
@@ -72,6 +101,8 @@ For example, open the interface in dark mode or save a full report to RAM:
 ```text
 xSysInfo DARK
 xSysInfo FULL >RAM:xSysInfo.txt
+xSysInfo SCSI
+xSysInfo SCSI FULL >RAM:xSysInfo-scsi.txt
 ```
 
 Example output from `xSysInfo WHICH`:
@@ -80,16 +111,91 @@ Example output from `xSysInfo WHICH`:
 
 ### Graphical interface
 
-The System Software Installed tile opens on an overview of the OS, physical
+The System Software tile opens on an overview of the OS, physical
 ROM, active ROM, Workbench, SetPatch, and graphics system. Its cycle button
 opens the library, device, resource, and MMU lists. Total Chip and Fast RAM
 are shown in the hardware overview.
+
+Onboard NCR 53C710/53C770 controllers show their integrated DMA engine,
+SCSI ID, DMA burst length, sync period/offset, data width, and parity
+checking. The 53C770 also shows whether its clock doubler is active.
+These settings are read at startup without resetting the controller;
+they do not require the SCSI option. Sync and width may reflect the last
+selected target. Sync period is the send period in internal synchronous
+clock cycles, including any extra setup cycle, not a measured MHz rate.
+DMA burst length is expressed in bus transfers.
+
+On an A3000, the optional **SCSI** Shell option or Workbench ToolType runs
+a WD33C93 check once at startup. It resets the controller, identifies
+WD33C93/A/B-compatible chips, reads microcode where supported, and measures
+the input clock. Stop all disk activity before launching with SCSI enabled.
+Normal Shell and Workbench launches leave the check disabled. When enabled,
+it has no confirmation prompt. AmigaOS 2.0 or later is required for its timer.
+
+The bootable floppy image enables it with `xSysInfo SCSI` in its
+Startup-Sequence. The check runs before xSysInfo enumerates drives;
+machines without a supported controller are silently skipped. The
+Workbench icon keeps `(SCSI)` disabled.
+
+The check skips busy controllers, incomplete transfers, and configurations
+whose reset settings cannot be recovered. Results appear on **CHIPSET**,
+in full **Report...** previews and **FULL** reports. Mode, timeout, and sync
+settings are
+snapshots taken before the check; sync describes the last selected target.
+Older chips without readable microcode show N/A. Clock measurement can
+also be unavailable on emulators. On supported hardware, a skipped or
+incomplete check produces a warning and Shell return code 5. If controller
+restoration fails, xSysInfo displays an error and exits with code 20 without
+enumerating drives, running further benchmarks or writing a report.
+Reboot before accessing disks in that case.
 
 On the Boards page, the cycle button switches between **NAMES**, **DEC**,
 and **HEX**. DEC and HEX show numeric product and manufacturer IDs and
 serial numbers; hexadecimal values use the Amiga-style `$` prefix.
 PCI boards continue to show their device class in the serial column.
 The selected mode is remembered until xSysInfo exits.
+
+The **Details** button shows one board at a time, including AutoConfig
+memory, diagnostic ROM, and configuration flags for Zorro boards. Use
+**Prev** and **Next** to browse boards and **Back** to return to the list.
+In MUI, select a board and click **Details**, or double-click its row.
+PCI details show the device class without Zorro-specific fields.
+
+### MUI interface
+
+Start xSysInfo with the `MUI` option or the `DISPLAY=mui` ToolType to
+use a resizable MUI window instead of the SysInfo-style display. The
+same information is organized on six register pages: **Software**,
+**Hardware**, **Speed**, **Memory**, **Drives**, and **Boards**. Hardware
+contains **Overview**, **CPU**, **Chipset**, **SCSI**, and **Clock** pages.
+The Clock page shows the battery-backed clock live. CPU caches use
+checkmarks, the SCSI device list opens in its own window, and
+**Project > Report...** opens a resizable report preview.
+
+The MUI interface needs MUI 3.8 or newer at
+runtime. Without it, xSysInfo opens the regular interface. The MUI code
+is built by default; build without it using `make MUI=0`. Switching this
+option rebuilds the affected code without requiring `make clean`. The build
+needs the MUI developer headers (`MUI_INC` can override their location).
+The floppy and LHA use the same executable and follow the `MUI` build option.
+The floppy packs xSysInfo and its libraries with ZX0 to save space; the LHA
+contains the original, unpacked files.
+MUI runtime libraries are not bundled in either artifact.
+Use `xSysInfo DEBUG MUI` to diagnose fallback: it reports whether MUI support
+was omitted from the executable, the library could not be opened, or MUI
+could not create its application or open its window.
+
+Both frontends share hardware rows, visibility rules, software overview
+values, and speed scaling through `src/format.c`. Add hardware fields there;
+the classic UI retains its pagination and MUI supplies scrollable groups.
+Widget creation, drawing, and event handling stay in the respective frontend.
+`src/display.c` handles the loading-screen handoff after either UI opens.
+
+Catalog identifiers describe the text's purpose, independently of the UI.
+Short page titles have a `_TITLE` suffix when they differ from existing
+headings; identical labels reuse existing identifiers. New IDs are appended
+so installed catalogs remain compatible. Missing entries in older catalogs
+use built-in English text.
 
 Dark mode, enabled with `xSysInfo DARK`:
 
@@ -99,18 +205,29 @@ Dark mode, enabled with `xSysInfo DARK`:
 
 These settings are read from the program's icon when xSysInfo starts from
 Workbench. Edit the icon's ToolTypes, with one entry per line. The supplied
-icon contains `DISPLAY=auto`.
+icon contains `DISPLAY=auto`, plus disabled examples `(DISPLAY=window)`,
+`(DISPLAY=screen)`, `(DISPLAY=pal)`, `(DISPLAY=ntsc)`, `(DISPLAY=mui)`,
+`(DARK)`, `(DEBUG)`, and `(SCSI)`.
 
 | ToolType | Description |
 | --- | --- |
-| `DISPLAY=auto` | Default. Open a window if the detected Workbench screen is wider than 640 pixels or taller than 512 pixels; otherwise use a separate PAL or NTSC screen. |
+| `DISPLAY=auto` | Default. Open a window if the detected Workbench screen is wider than 640 pixels or taller than 512 pixels; otherwise use a separate screen with system defaults. |
 | `DISPLAY=window` | Open a window on the Workbench screen. |
-| `DISPLAY=screen` | Open a separate PAL or NTSC screen. |
+| `DISPLAY=screen` | Open a separate screen with system defaults. |
+| `DISPLAY=pal` | Open a separate PAL HIRES screen (640 × 256). |
+| `DISPLAY=ntsc` | Open a separate NTSC HIRES screen (640 × 200). |
+| `DISPLAY=mui` | Use the MUI interface. Falls back to `DISPLAY=auto` when MUI is not installed. |
 | `DARK` | Use the dark blue palette. Omit this entry to use the default gray palette. |
-| `DEBUG` | Enable diagnostic output. Omit this entry to leave debugging off. |
+| `DEBUG` | Write diagnostics to `RAM:xSysInfo.log`, replacing any previous log. Omit this entry to leave debugging off. |
+| `SCSI` | Run the optional WD SCSI controller check at startup, as described above. Disabled by default. |
 
-Use one `DISPLAY` entry to select the display mode. Add `DARK` or `DEBUG`
-as separate entries to enable either option.
+Keep exactly one `DISPLAY` entry enabled to select the display mode; put
+parentheses around the other choices. Remove the parentheses from `(DARK)`,
+`(DEBUG)`, or `(SCSI)` to enable an option, and restore them to disable it.
+
+`AUTO` and `SCREEN` respect AmigaOS Mode Promotion. `PAL` and `NTSC`
+explicitly select native timing on AmigaOS 2.0 or later. On Kickstart 1.3,
+they behave like `SCREEN`, using the system's native PAL or NTSC mode.
 
 ![XSysInfo in windowed mode](docs/xsysinfo-windowed.png)
 
@@ -121,23 +238,30 @@ as separate entries to enable either option.
 
 *   [FlexCat](https://github.com/adtools/flexcat): Builds the localization
     catalogs from the source submodule.
-*   [Identify](http://identify.shredzone.org/): Identifies hardware and
-    software. Developer headers come from the source submodule; the runtime
-    library comes from
-    [IdentifyUsr.lha](https://aminet.net/util/libs/IdentifyUsr.lha).
+*   [Identify](https://github.com/reinauer/identify/tree/xsysinfo): Identifies
+    hardware and software. The source submodule tracks our `xsysinfo` branch,
+    which includes the pending Codefloe PRs #28–32. Developer headers and the
+    floppy's 68000-compatible runtime library come from that pinned source.
 *   [PCI IDs](https://github.com/pciutils/pciids): Supplies the PCI identification
     data through identify's nested submodule. The disk's `pci.db` is built
-    locally with [the empty-vendor pruning patch](https://codefloe.com/shred/identify/commit/19f91eac2debe6085794203c541ffcf098181f03).
+    locally using Identify's generator, which omits vendors without devices
+    on our `xsysinfo` branch.
     The full database is available separately in
     [IdentifyPci.lha](https://aminet.net/util/libs/IdentifyPci.lha).
 *   [openpci68k.lha](https://aminet.net/driver/other/openpci68k.lha): Supplies
     `openpci.library` for PCI device access.
 *   [MMULib.lha](https://aminet.net/util/libs/MMULib.lha): Supplies
     `mmu.library` and the 68020/68030/68040/68060 support libraries included
-    on the disk image.
+    on the disk image, plus its default `MMU-Configuration` and `GVPInit`.
+    The disk's `Prefs/Env-Archive/MMU-Configuration` ends with a `GVPInit`
+    line, which keeps affected GVP 040/060 boards from bursting into Zorro II
+    space; GVPInit does nothing on other machines.
 *   [MuManual.lha](https://aminet.net/docs/misc/MuManual.lha): Supplies MMU
     developer headers and function descriptions used to generate compiler
     bindings.
+*   [L-Packer](https://github.com/reinauer/L-Packer): Built from the source
+    submodule with CMake 3.16 or newer and native C/C++ compilers. Packs the
+    floppy executable with `-zx0` and libraries with `-library -zx0`.
 *   [TinySetPatch](https://github.com/reinauer/TinySetPatch): Built from the
     source submodule for CPU support and system initialization when booting
     the disk image.

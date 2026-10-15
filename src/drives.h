@@ -9,9 +9,34 @@
 #define DRIVES_H
 
 #include "xsysinfo.h"
+#include <stdint.h>
 
 /* Maximum drives we'll track */
 #define MAX_DRIVES  32
+#define DRIVE_SPEED_SAMPLES 3
+
+/* Completed sequential device-read measurements, in read order. */
+typedef struct {
+    uint64_t offset;
+    ULONG bytes_read;
+    ULONG elapsed_us;
+    ULONG read_count;
+    ULONG min_transfer;
+    ULONG max_transfer;
+    ULONG bytes_sec;
+} DriveSpeedSample;
+
+typedef struct {
+    DriveSpeedSample samples[DRIVE_SPEED_SAMPLES];
+    ULONG sample_count;
+    ULONG min_bytes_sec;
+    ULONG max_bytes_sec;
+    ULONG buffer_flags;         /* Allocation requirements */
+    ULONG buffer_type;          /* Actual TypeOfMem result */
+    UWORD read_command;
+    BOOL safe_buffer_retry;
+    BOOL offset_fallback;
+} DriveSpeedResults;
 
 /* Disk state */
 typedef enum {
@@ -70,6 +95,7 @@ typedef struct {
     BOOL has_max_transfer;
     BOOL has_address_mask;
     ULONG speed_bytes_sec;      /* 0 = not measured */
+    DriveSpeedResults speed_results;
     ULONG disk_errors;
     BOOL speed_measured;
     BOOL scsi_supported;        /* TRUE if device supports SCSI direct commands */
@@ -78,8 +104,9 @@ typedef struct {
 
 /* Drive list */
 typedef struct {
-    DriveInfo drives[MAX_DRIVES];
+    DriveInfo *drives;          /* Allocated to fit the drives */
     ULONG count;
+    ULONG capacity;
 } DriveList;
 
 /* Global drive list */
@@ -87,6 +114,7 @@ extern DriveList drive_list;
 
 /* Function prototypes */
 void enumerate_drives(void);
+void free_drive_list(void);
 void refresh_drive_info(ULONG index);
 ULONG measure_drive_speed(ULONG index);
 BOOL check_disk_present(ULONG index);
@@ -101,5 +129,9 @@ void format_filesystem_display(const DriveInfo *drive, char *buffer,
 const char *get_disk_state_string(DiskState state);
 const char *get_filesystem_string(FilesystemType fs);
 FilesystemType identify_filesystem(ULONG dos_type);
+const char *drive_read_cmd_name(UWORD command);
+
+BOOL drive_has_media_evidence(const DriveInfo *drive);
+void format_drive_speed(const DriveInfo *drive, char *buffer, size_t size);
 
 #endif /* DRIVES_H */

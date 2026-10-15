@@ -14,22 +14,48 @@
 #include <exec/devices.h>
 #include <exec/resident.h>
 #include <exec/semaphores.h>
+#include <dos/dosextens.h>
 #include <libraries/identify.h>
 
 #include <proto/exec.h>
+#include <proto/dos.h>
 #include <proto/mmu.h>
 #include <proto/identify.h>
 
 #include "xsysinfo.h"
 #include "software.h"
+#include "growlist.h"
 #include "hardware.h"
 #include "locale_str.h"
+#include "debug.h"
 
 /* Global software lists */
 SoftwareList libraries_list;
 SoftwareList devices_list;
 SoftwareList resources_list;
 SoftwareList mmu_list;
+
+/* Room for extra entries beyond count, within the fixed entry limit. */
+static BOOL reserve_software(SoftwareList *list, ULONG extra)
+{
+    return grow_list((APTR *)&list->entries, &list->capacity, list->count,
+                     list->count + extra, sizeof(SoftwareEntry),
+                     MAX_SOFTWARE_ENTRIES);
+}
+
+static void reset_software_list(SoftwareList *list)
+{
+    free_list((APTR *)&list->entries, &list->capacity, sizeof(SoftwareEntry));
+    list->count = 0;
+}
+
+void free_software_lists(void)
+{
+    reset_software_list(&libraries_list);
+    reset_software_list(&devices_list);
+    reset_software_list(&resources_list);
+    reset_software_list(&mmu_list);
+}
 SystemSoftwareInfo system_software;
 
 /* External references */
@@ -136,7 +162,7 @@ void enumerate_libraries(void)
     ULONG i;
     SoftwareEntry *entry;
 
-    memset(&libraries_list, 0, sizeof(libraries_list));
+    reset_software_list(&libraries_list);
 
     Forbid();
 
@@ -159,7 +185,7 @@ void enumerate_libraries(void)
             }
         }
 
-        if (libraries_list.count >= MAX_SOFTWARE_ENTRIES)
+        if (!reserve_software(&libraries_list, 1))
             continue;
 
         entry = &libraries_list.entries[libraries_list.count];
@@ -182,7 +208,7 @@ void enumerate_libraries(void)
 
     /* Insert artificial "kickstart" entry at the beginning */
     /* Insert artificial "kickstart (soft)" entry at the beginning */
-    if ((libraries_list.count+1) < MAX_SOFTWARE_ENTRIES) {
+    if (reserve_software(&libraries_list, 2)) {
         if ((hw_info.kickstart_version != hw_info.kickstart_patch_version ||
              hw_info.kickstart_revision != hw_info.kickstart_patch_revision) &&
             0 != hw_info.kickstart_patch_version &&
@@ -233,7 +259,7 @@ void enumerate_devices(void)
 {
     struct Node *node;
 
-    memset(&devices_list, 0, sizeof(devices_list));
+    reset_software_list(&devices_list);
 
     Forbid();
 
@@ -241,7 +267,7 @@ void enumerate_devices(void)
          node = node->ln_Succ) {
         struct Device *dev = (struct Device *)node;
 
-        if (devices_list.count >= MAX_SOFTWARE_ENTRIES) break;
+        if (!reserve_software(&devices_list, 1)) break;
 
         SoftwareEntry *entry = &devices_list.entries[devices_list.count];
 
@@ -303,7 +329,7 @@ void enumerate_resources(void)
 {
     struct Node *node;
 
-    memset(&resources_list, 0, sizeof(resources_list));
+    reset_software_list(&resources_list);
 
     Forbid();
 
@@ -311,7 +337,7 @@ void enumerate_resources(void)
          node = node->ln_Succ) {
         struct Library *res = (struct Library *)node;
 
-        if (resources_list.count >= MAX_SOFTWARE_ENTRIES) break;
+        if (!reserve_software(&resources_list, 1)) break;
 
         SoftwareEntry *entry = &resources_list.entries[resources_list.count];
 
@@ -360,25 +386,27 @@ void enumerate_mmu_entries(void)
     struct MappingNode *mn;
     SoftwareEntry *entry;
     char buffer[128];
-    memset(&mmu_list, 0, sizeof(mmu_list));
+    reset_software_list(&mmu_list);
 
     Forbid();
 
     //is mmu.library loaded?
-    if (mmuLoaded && hw_info.mmu_enabled) {
+    if (mmuLoaded && hw_info.mmu_present) {
         //no else: iff mmu.library is in the libraries list, it can load!
         if (DOSBase && DOSBase->dl_lib.lib_Version >= 37) {
-            if ((MMUBase = OpenLibrary((CONST_STRPTR)"mmu.library", 40L))) {
+            if ((MMUBase = open_mmu_library())) {
 
-                entry = &mmu_list.entries[mmu_list.count];
-                snprintf(entry->name, sizeof(entry->name), "%s: %lukB.",
-                         get_string(MSG_MMU_SIZE),
-                         (unsigned long)(GetPageSize(NULL) / 1024));
-                mmu_list.count++;
+                if (reserve_software(&mmu_list, 1)) {
+                    entry = &mmu_list.entries[mmu_list.count];
+                    snprintf(entry->name, sizeof(entry->name), "%s: %lukB.",
+                             get_string(MSG_MMU_SIZE),
+                             (unsigned long)(GetPageSize(NULL) / 1024));
+                    mmu_list.count++;
+                }
                 /* Get the mapping of the default context */
                 list = GetMapping(NULL);
                 for (mn = list ? (struct MappingNode *)(list->mlh_Head) : NULL;
-                     mn && mn->map_succ && mmu_list.count < 256;
+                     mn && mn->map_succ && reserve_software(&mmu_list, 1);
                      mn = mn->map_succ)
                 {
                     size_t pos;
@@ -522,7 +550,7 @@ void enumerate_mmu_entries(void)
                     ReleaseMapping(NULL, list);
                 }
                 /* Append hint entries at end of list */
-                if (mmu_list.count < 256 - 8) {
+                if (reserve_software(&mmu_list, 8)) {
                     entry = &mmu_list.entries[mmu_list.count];
                     snprintf(entry->name, sizeof(entry->name), "%s",
                              get_string(MSG_MMU_ADDRESS_HINT));
@@ -560,7 +588,7 @@ void enumerate_mmu_entries(void)
                 CloseLibrary((struct Library *)MMUBase);
             }
         }
-    } else {
+    } else if (reserve_software(&mmu_list, 1)) {
         entry = &mmu_list.entries[0];
         copy_string(entry->name, "mmu.library not loaded",
                     sizeof(entry->name));
@@ -569,43 +597,215 @@ void enumerate_mmu_entries(void)
     Permit();
 }
 
+/* What PrismD publishes behind its "prism" semaphore (PrismRTG's prism.h,
+ * interface version 7). Only the fields up to release are read; the
+ * layout must stay in step with upstream. */
+struct PrismSemView {
+    struct SignalSemaphore ss;
+    UWORD version;
+    const char *boardName;
+    struct Task *task;
+    ULONG numModes;
+    APTR screenInfo;
+    APTR testBegin;
+    APTR testEnd;
+    APTR drawLock;
+    APTR logLevel;
+    const ULONG *boardFlags;
+    ULONG hwOps;
+    UBYTE numBoards;
+    const char *board2Name;
+    const ULONG *board2Flags;
+    ULONG board2HwOps;
+    ULONG vramKB[2];
+    APTR testBeginOn;
+    ULONG boardAddr[2];
+    UBYTE boardsSwapped;
+    const char *release;       /* version 7: "1.1b6" */
+    const char *releaseDate;
+};
+#define PRISM_SEM_RELEASE_VERSION 7
+
+static void append_text(char *buffer, size_t size, const char *text)
+{
+    size_t used = strlen(buffer);
+
+    if (used + 1 < size)
+        strncat(buffer, text, size - used - 1);
+}
+
+/* PrismRTG brings its own cybergraphics.library and Picasso96API.library,
+ * which identify.library reports as CyberGraphX or Picasso96. Its daemon
+ * PrismD publishes the "prism" semaphore while it runs; from interface
+ * version 7 that carries the release and the board name. Earlier
+ * PrismDs are named without a release. */
+/* PrismRTG's release and board from its semaphore (interface version 7
+ * on). Copied under Forbid, since PrismD can quit. */
+static void prismrtg_version(char *text, size_t size)
+{
+    struct PrismSemView *sem;
+    char release[16] = "", board[32] = "";
+
+    Forbid();
+    sem = (struct PrismSemView *)FindSemaphore((CONST_STRPTR)"prism");
+    if (sem && sem->version >= PRISM_SEM_RELEASE_VERSION) {
+        if (sem->release)
+            copy_string(release, sem->release, sizeof(release));
+        if (sem->boardName)
+            copy_string(board, sem->boardName, sizeof(board));
+    }
+    Permit();
+
+    if (release[0]) {
+        append_text(text, size, " ");
+        append_text(text, size, release);
+    }
+    /* The board only when the whole name fits; it has its own view. */
+    if (release[0] && board[0] &&
+        strlen(text) + strlen(board) + 3 < size) {
+        append_text(text, size, " (");
+        append_text(text, size, board);
+        append_text(text, size, ")");
+    }
+}
+
+/* The Picasso96 installer records the release ("3.6.3") as the first line
+ * of Picasso96/Version, which boot copies from ENVARC: to ENV:. Neither
+ * may exist, so DOS requesters are off while looking. */
+static BOOL picasso96_release(char *release, size_t size)
+{
+    static const char *const paths[] = {
+        "ENV:Picasso96/Version", "Picasso96:Version"
+    };
+    struct Process *proc = (struct Process *)FindTask(NULL);
+    APTR old_window = proc->pr_WindowPtr;
+    char line[16];
+    ULONG i, n;
+    BPTR fh;
+
+    release[0] = '\0';
+    proc->pr_WindowPtr = (APTR)-1;
+    for (i = 0; i < sizeof(paths) / sizeof(paths[0]) && !release[0]; i++) {
+        fh = Open((CONST_STRPTR)paths[i], MODE_OLDFILE);
+        if (!fh)
+            continue;
+        n = Read(fh, line, sizeof(line) - 1);
+        Close(fh);
+        if ((LONG)n <= 0)
+            continue;
+        line[n] = '\0';
+        /* Keep the leading "3.6.3"; anything else is not a release. */
+        for (n = 0; line[n] && strchr("0123456789.", line[n]); n++) {}
+        line[n] = '\0';
+        if (n && line[0] != '.')
+            copy_string(release, line, size);
+    }
+    proc->pr_WindowPtr = old_window;
+    return release[0] != '\0';
+}
+
+/* Version of a loaded library, for systems without a release number. */
+static BOOL library_version(const char *name, UWORD *version, UWORD *revision)
+{
+    struct Library *lib;
+
+    Forbid();
+    lib = (struct Library *)FindName(&SysBase->LibList, (CONST_STRPTR)name);
+    if (lib) {
+        *version = lib->lib_Version;
+        *revision = lib->lib_Revision;
+    }
+    Permit();
+    return lib != NULL;
+}
+
+static void append_library_version(char *text, size_t size,
+                                   const char *library, const char *label)
+{
+    UWORD version, revision;
+    char buffer[32];
+
+    if (!library_version(library, &version, &revision))
+        return;
+    snprintf(buffer, sizeof(buffer), " (%s %u.%u)", label, version, revision);
+    if (strlen(text) + strlen(buffer) < size)
+        append_text(text, size, buffer);
+}
+
+/*
+ * identify.library names the graphics system; the version comes from the
+ * system itself. PrismRTG and Picasso96 have release numbers; CyberGraphX
+ * only has its library versions, which are shown as such.
+ */
 static void detect_graphics_system(void)
 {
+    char *text = system_software.graphics_system;
+    size_t size = sizeof(system_software.graphics_system);
+    char release[16];
     const char *name;
 
     system_software.graphics_system_id = IdentifyBase ?
         IdHardwareNumTags(IDHW_GFXSYS, TAG_DONE) : IDGOS_AMIGAOS;
+
     switch (system_software.graphics_system_id) {
     case IDGOS_EGS:       name = "EGS"; break;
     case IDGOS_RETINA:    name = "Retina"; break;
     case IDGOS_GRAFFITI:  name = "Graffiti"; break;
     case IDGOS_TIGA:      name = "TIGA"; break;
     case IDGOS_PROBENCH:  name = "ProBench"; break;
-    case IDGOS_PICASSO:
+    case IDGOS_PICASSO:   name = "Picasso"; break;
     case IDGOS_PICASSO96: name = "Picasso96"; break;
     case IDGOS_CGX:       name = "CyberGraphX V2"; break;
     case IDGOS_CGX3:      name = "CyberGraphX V3"; break;
     case IDGOS_CGX4:      name = "CyberGraphX V4"; break;
+    case IDGOS_PRISMRTG:  name = "PrismRTG"; break;
     default:
         system_software.graphics_system_id = IDGOS_AMIGAOS;
         name = get_string(MSG_NATIVE_GRAPHICS);
         break;
     }
-    copy_string(system_software.graphics_system, name,
-                sizeof(system_software.graphics_system));
+    copy_string(text, name, size);
+
+    switch (system_software.graphics_system_id) {
+    case IDGOS_PRISMRTG:
+        prismrtg_version(text, size);
+        break;
+    case IDGOS_PICASSO96:
+        if (picasso96_release(release, sizeof(release))) {
+            append_text(text, size, " ");
+            append_text(text, size, release);
+        } else {
+            append_library_version(text, size, "rtg.library", "rtg");
+        }
+        break;
+    case IDGOS_CGX3:
+    case IDGOS_CGX4:
+        append_library_version(text, size, "cgxsystem.library", "cgx");
+        break;
+    case IDGOS_CGX:
+        append_library_version(text, size, "cybergraphics.library", "cgx");
+        break;
+    default:
+        break;
+    }
 }
 
 void detect_system_software(void)
 {
+    /* The version follows SignalSemaphore and the private patch MinList. */
+    struct SetPatchSemaphore {
+        struct SignalSemaphore semaphore;
+        struct MinList patches;
+        UWORD version;
+        UWORD revision;
+    } const volatile *setpatch;
     /* TinySetPatch appends this record at byte 80 of its SetPatch semaphore. */
     struct TinySetPatchInfo {
         ULONG magic[2];
         UWORD version;
         UWORD revision;
     } const volatile *tinysetpatch;
-    struct SignalSemaphore *semaphore;
     struct Library *version_base;
-    ULONG setpatch = 0;
     STRPTR os_name;
 
     memset(&system_software, 0, sizeof(system_software));
@@ -624,19 +824,25 @@ void detect_system_software(void)
         if (system_software.os_id != IDOS_UNKNOWN && os_name)
             copy_string(system_software.os_name, (const char *)os_name,
                         sizeof(system_software.os_name));
-        setpatch = IdHardwareNumTags(IDHW_SETPATCHVER, TAG_DONE);
     }
+    /* Older identify.library versions do not recognize the V48 ROMs. */
+    if (!system_software.os_name[0] && SysBase->LibNode.lib_Version == 48)
+        copy_string(system_software.os_name, "AmigaOS 3.3",
+                    sizeof(system_software.os_name));
+    /* Identify caches a missing SetPatch result, including across runs of
+     * xSysInfo. Read the live marker so a later manual SetPatch is visible. */
+    Forbid();
+    setpatch = (const volatile struct SetPatchSemaphore *)
+        FindSemaphore((CONST_STRPTR)"\253 SetPatch \273");
     if (setpatch) {
-        system_software.has_setpatch_version = TRUE;
-        system_software.setpatch_version = setpatch & 0xffff;
-        system_software.setpatch_revision = setpatch >> 16;
-        Forbid();
-        semaphore = FindSemaphore((CONST_STRPTR)"\253 SetPatch \273");
-        if (semaphore) {
+        system_software.setpatch_version = setpatch->version;
+        system_software.setpatch_revision = setpatch->revision;
+        system_software.has_setpatch_version = setpatch->version != 0;
+        if (system_software.has_setpatch_version) {
             /* Older implementations have no extension; require both magic
              * words before interpreting the following version fields. */
             tinysetpatch = (const volatile struct TinySetPatchInfo *)
-                ((const UBYTE *)semaphore + 80);
+                ((const volatile UBYTE *)setpatch + 80);
             if (tinysetpatch->magic[0] == 0x54696e79UL &&
                 tinysetpatch->magic[1] == 0x53657450UL) {
                 system_software.is_tinysetpatch = TRUE;
@@ -644,8 +850,11 @@ void detect_system_software(void)
                 system_software.tinysetpatch_revision = tinysetpatch->revision;
             }
         }
-        Permit();
     }
+    Permit();
+    debug("  software: SetPatch semaphore $%08lx, version %lu.%lu\n",
+          (ULONG)setpatch, (ULONG)system_software.setpatch_version,
+          (ULONG)system_software.setpatch_revision);
     detect_graphics_system();
 }
 
